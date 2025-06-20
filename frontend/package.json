@@ -1,0 +1,37 @@
+{
+  "name": "accounting-app-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for Boring & Sondir Service Company Accounting Application",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "keywords": [
+    "accounting",
+    "project-management",
+    "boring",
+    "sondir"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@chakra-ui/icons": "^2.1.1",
+    "@chakra-ui/react": "^2.8.2",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "axios": "^1.10.0",
+    "file-saver": "^2.0.5",
+    "framer-motion": "^12.18.1",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.1",
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-icons": "^5.5.0",
+    "recharts": "^2.15.3",
+    "xlsx": "^0.18.5"
+  }
+}

@@ -1,0 +1,161 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Client model
+model Client {
+  id        Int       @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  projects  Project[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// Chart of Accounts model
+model ChartOfAccount {
+  id           Int           @id @default(autoincrement())
+  code         String        @unique
+  name         String
+  type         String // Pendapatan, Beban, Aktiva, Aset Tetap, Kontra Aset
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+// Project model
+model Project {
+  id           Int           @id @default(autoincrement())
+  projectCode  String        @unique
+  name         String
+  clientId     Int
+  client       Client        @relation(fields: [clientId], references: [id])
+  startDate    DateTime
+  endDate      DateTime?
+  totalValue   Decimal       @db.Decimal(15, 2)
+  status       String        @default("ongoing") // ongoing, completed, cancelled
+  projectCosts ProjectCost[]
+  billings     Billing[]
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+// Project Cost model
+model ProjectCost {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  project     Project  @relation(fields: [projectId], references: [id])
+  category    String // material, labor, equipment, other
+  description String
+  amount      Decimal  @db.Decimal(15, 2)
+  date        DateTime
+  status      String   @default("pending") // pending, approved, rejected
+  receipt     String? // path to uploaded receipt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Billing model
+model Billing {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  project     Project  @relation(fields: [projectId], references: [id])
+  billingDate DateTime
+  percentage  Decimal  @db.Decimal(5, 2) // e.g. 25% of total project value
+  amount      Decimal  @db.Decimal(15, 2)
+  status      String   @default("unpaid") // unpaid, partially_paid, paid
+  invoice     String? // path to generated invoice
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Fixed Assets model
+model FixedAsset {
+  id                    Int      @id @default(autoincrement())
+  assetName             String
+  category              String   @default("equipment") // equipment, vehicle, building, land, furniture, other
+  acquisitionDate       DateTime
+  value                 Decimal  @db.Decimal(15, 2)
+  usefulLife            Int // in years
+  accumulatedDepreciation Decimal  @db.Decimal(15, 2) @default(0)
+  bookValue             Decimal  @db.Decimal(15, 2)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// Transactions model
+model Transaction {
+  id          Int            @id @default(autoincrement())
+  date        DateTime
+  type        String // income, expense, transfer
+  accountCode String
+  account     ChartOfAccount @relation(fields: [accountCode], references: [code])
+  description String
+  amount      Decimal        @db.Decimal(15, 2)
+  projectId   Int?
+  project     Project?       @relation(fields: [projectId], references: [id])
+  notes       String?        // Optional notes field for additional transaction details
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+// Settings model for application-wide configuration
+model Setting {
+  id              Int      @id @default(autoincrement())
+  // Company Profile
+  companyName     String
+  companyAddress  String?
+  companyPhone    String?
+  companyEmail    String?
+  taxNumber       String?
+  
+  // Financial Settings
+  currency        String   @default("IDR")
+  currencySymbol  String   @default("Rp")
+  invoicePrefix   String   @default("INV")
+  projectPrefix   String   @default("PRJ")
+  fiscalYearStart String   @default("01-01") // format DD-MM
+  vatRate         Decimal  @db.Decimal(5, 2) @default(11)
+  
+  // Project Settings
+  defaultPaymentTerms Int      @default(30) // days
+  reminderDays        Int      @default(7)  // days
+  boringDefaultRate   Decimal  @db.Decimal(15, 2) @default(3500000)
+  sondirDefaultRate   Decimal  @db.Decimal(15, 2) @default(2000000)
+  
+  // User Management
+  enableUserRoles     Boolean  @default(true)
+  allowClientPortal   Boolean  @default(false)
+  
+  // Security Settings
+  enableTwoFactor     Boolean  @default(false)
+  enableAutomaticBackup Boolean @default(true)
+  backupFrequency     String   @default("daily") // daily, weekly, monthly
+  
+  // System
+  lastUpdated        DateTime @default(now())
+  updatedBy          Int?     // User ID who last updated settings
+} 

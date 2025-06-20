@@ -1,0 +1,117 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+require('dotenv').config();
+
+// Import the Prisma client utility
+const { testConnection, connect } = require('./utils/prisma');
+
+// Import logger
+const logger = require('./utils/logger');
+const { developmentLogger, productionLogger } = require('./middleware/requestLogger');
+
+// Import routes
+const clientRoutes = require('./routes/clients');
+const accountRoutes = require('./routes/accounts');
+const projectRoutes = require('./routes/projects');
+const billingRoutes = require('./routes/billings');
+const assetRoutes = require('./routes/assets');
+const transactionRoutes = require('./routes/transactions');
+const authRoutes = require('./routes/auth');
+const dashboardRoutes = require('./routes/dashboard');
+const wipRoutes = require('./routes/wip');
+const profitabilityRoutes = require('./routes/profitability');
+const settingsRoutes = require('./routes/settings');
+
+// Import middleware
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Konfigurasi CORS yang lebih spesifik
+const corsOptions = {
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://192.168.1.24:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+// Middleware
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Gunakan logger berdasarkan environment
+if (NODE_ENV === 'production') {
+  app.use(productionLogger);
+  logger.info('Server running in production mode');
+} else {
+  app.use(developmentLogger);
+  logger.info('Server running in development mode');
+}
+
+app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/accounts', accountRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/billings', billingRoutes);
+app.use('/api/assets', assetRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/wip', wipRoutes);
+app.use('/api/profitability', profitabilityRoutes);
+app.use('/api/settings', settingsRoutes);
+
+// Test endpoint untuk memeriksa koneksi
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
+
+// Cron job untuk menjalankan perhitungan penyusutan aset tetap secara otomatis
+// Ini akan dijalankan setiap hari pada jam 00:00
+const cron = require('node-cron');
+const depreciationService = require('./services/depreciation');
+
+cron.schedule('0 0 * * *', async () => {
+  logger.info('Running automatic depreciation calculation...');
+  try {
+    const result = await depreciationService.updateAllAssetsDepreciation();
+    logger.info('Depreciation calculation completed', { result });
+  } catch (error) {
+    logger.error('Error running depreciation calculation', { error: error.message });
+  }
+});
+
+// Error handling middleware
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// Test database connection before starting the server
+async function startServer() {
+  try {
+    // Test database connection
+    await testConnection();
+    
+    // Explicitly establish connection
+    await connect();
+    
+    // Start server
+    app.listen(PORT, () => {
+      logger.info(`Server berjalan pada port ${PORT}`, { 
+        port: PORT, 
+        environment: NODE_ENV,
+        corsOrigins: corsOptions.origin
+      });
+    });
+  } catch (error) {
+    logger.error('Failed to start server', { error: error.message });
+    process.exit(1);
+  }
+}
+
+startServer(); 
