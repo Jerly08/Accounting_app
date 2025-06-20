@@ -6,33 +6,33 @@ Aplikasi manajemen keuangan dan akuntansi proyek khusus untuk perusahaan jasa bo
 
 - **Master Data Management**
   - Pengelolaan data klien
-  - Struktur Chart of Accounts
+  - Struktur Chart of Accounts sesuai standar akuntansi
 
 - **Manajemen Proyek**
   - Pendaftaran dan tracking proyek
-  - Pencatatan biaya proyek dengan kategorisasi
+  - Pencatatan biaya proyek dengan kategorisasi (material, sewa, tenaga kerja, dll)
   - Upload bukti pengeluaran
 
 - **Penagihan & Keuangan**
   - Pembuatan invoice berdasarkan termin
   - Tracking status pembayaran
   - Pencatatan transaksi kas & bank
-  - Manajemen aset tetap & penyusutan
+  - Manajemen aset tetap dengan penyusutan otomatis
+  - Pengelolaan WIP (Work In Progress) untuk proyek yang belum selesai
 
 - **Laporan & Analisis**
   - Dashboard dengan KPI proyek
   - Laporan laba rugi per proyek
   - Neraca & arus kas
-  - Export laporan ke PDF/Excel/CSV/JSON dengan berbagai opsi kustomisasi
+  - Export laporan ke PDF/Excel
 
 ## Teknologi
 
-- **Frontend**: Next.js, React, Chakra UI
+- **Frontend**: Next.js, React
 - **Backend**: Node.js, Express
-- **Database**: MySQL
+- **Database**: PostgreSQL/MySQL
 - **ORM**: Prisma
 - **Authentication**: JWT
-- **Export Tools**: XLSX, jsPDF, FileSaver
 
 ## Struktur Proyek
 
@@ -65,14 +65,14 @@ app_accounting/
 ### Prasyarat
 
 - Node.js (v14 atau lebih tinggi)
-- MySQL (v8 atau lebih tinggi)
+- PostgreSQL/MySQL
 
 ### Langkah Instalasi
 
 1. **Clone repository**
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Jerly08/Accounting_app.git
 cd app_accounting
 ```
 
@@ -111,25 +111,42 @@ npm run dev
 3. Buat Invoice
 4. Terima Pembayaran
 5. Generate Laporan
-6. Export Data untuk Analisis Lanjutan
 
 ### Struktur Database
 
 Aplikasi menggunakan beberapa model data utama:
-- clients: data pelanggan
-- projects: informasi proyek
-- project_costs: biaya-biaya proyek
-- billings: penagihan dan pembayaran
-- fixed_assets: aset tetap perusahaan
-- transactions: transaksi keuangan
-- chart_of_accounts: struktur akun keuangan
+- clients (id, name, phone, email, address)
+- projects (id, project_code, name, client_id, start_date, end_date, total_value, status)
+- project_costs (id, project_id, category, description, amount, date, status)
+- billings (id, project_id, billing_date, percentage, amount, status)
+- fixed_assets (id, asset_name, acquisition_date, value, useful_life, accumulated_depreciation, book_value)
+- transactions (id, date, type, account_code, description, amount, project_id)
+- chart_of_accounts (code, name, type)
 
-## Dokumentasi Tambahan
+### Contoh Struktur Akun
 
-- [Fitur Export Laporan](docs/EXPORT_FEATURES.md) - Panduan lengkap untuk fitur export dengan berbagai format
-- [Panduan Pengguna](docs/USER_GUIDE.md) - Panduan penggunaan aplikasi
-- [Panduan Pengembangan](docs/DEVELOPER_GUIDE.md) - Dokumentasi untuk pengembang
+| Kode Akun | Nama Akun | Tipe |
+|-----------|-----------|------|
+| 4001 | Pendapatan Jasa Boring & Sondir | Pendapatan |
+| 5101 | Beban Proyek - Proyek A | Beban |
+| 5102 | Beban Proyek - Proyek B | Beban |
+| 6101 | Beban Operasional Kantor | Beban |
+| 1201 | Piutang Usaha | Aktiva |
+| 1101 | Kas Proyek | Aktiva |
+| 1102 | Bank BCA | Aktiva |
+| 1301 | Pekerjaan Dalam Proses (WIP) | Aktiva |
+| 1501 | Mesin Boring | Aset Tetap |
+| 1601 | Akumulasi Penyusutan Mesin Boring | Kontra Aset |
 
-## Lisensi
+## Fitur Khusus
 
-[Lisensi MIT](LICENSE) 
+- Pengelolaan WIP untuk proyek yang belum selesai
+- Manajemen aset tetap dengan penyusutan otomatis
+- Reporting yang komprehensif untuk analisis bisnis
+- Perhitungan laba rugi per proyek
+
+## Dokumentasi
+
+- [Fitur Transaksi Keuangan](docs/FINANCIAL-TRANSACTIONS.md)
+- [Fitur Export](docs/EXPORT_FEATURES.md)
+
