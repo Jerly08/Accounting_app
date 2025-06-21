@@ -35,6 +35,10 @@ import {
   FormLabel,
   Stack,
   Skeleton,
+  Card,
+  CardBody,
+  VStack,
+  Input,
 } from '@chakra-ui/react';
 import { useRouter } from 'next/router';
 import { FiArrowLeft, FiFilter } from 'react-icons/fi';
@@ -46,13 +50,22 @@ import EmptyState from '../../components/common/EmptyState';
 import CashFlowExportButton from '../../components/common/CashFlowExportButton';
 import api from '../../config/api';
 import React from 'react';
+import moment from 'moment';
+import { FaArrowLeft, FaFileExport } from 'react-icons/fa';
 
 const CashFlowPage = () => {
   const router = useRouter();
   const [cashFlowData, setCashFlowData] = useState({
-    operating: [],
-    investing: [],
-    financing: [],
+    operating: { activities: [] },
+    investing: { activities: [] },
+    financing: { activities: [] },
+    summary: {
+      totalOperating: 0,
+      totalInvesting: 0,
+      totalFinancing: 0,
+      netCashFlow: 0
+    },
+    period: '',
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -65,6 +78,14 @@ const CashFlowPage = () => {
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
   const cardBg = useColorModeValue('white', 'gray.700');
+
+  // Replace the existing totals state declaration with a useState hook
+  const [totals, setTotals] = useState({
+    totalOperating: 0,
+    totalInvesting: 0,
+    totalFinancing: 0,
+    netCashFlow: 0
+  });
 
   // Format currency
   const formatCurrency = (amount) => {
@@ -88,165 +109,53 @@ const CashFlowPage = () => {
 
   // Fetch cash flow data
   const fetchCashFlowData = async () => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setLoading(true);
-      setError(null);
-      
-      // Fetch accounts
-      const accountsResponse = await api.get('/api/accounts');
-      
-      // Fetch transactions within date range
-      const transactionsResponse = await api.get('/api/transactions', {
+      console.log(`Fetching cash flow data for period: ${startDate} to ${endDate}`);
+      const response = await api.get('/api/cash-flow', {
         params: {
-          date_after: startDate,
-          date_before: endDate
+          startDate: startDate,
+          endDate: endDate
         }
       });
-      
-      // Process data to create cash flow report
-      const accounts = accountsResponse.data.data || [];
-      const transactions = transactionsResponse.data.data || [];
-      
-      // Define cash account types
-      const cashAccounts = accounts.filter(account => 
-        account.type === 'asset' && 
-        (account.category === 'Cash' || account.category === 'Bank')
-      );
-      
-      // Group transactions by activity type
-      const operatingActivities = [];
-      const investingActivities = [];
-      const financingActivities = [];
-      
-      // Define account categories for each activity type
-      const operatingCategories = ['Revenue', 'Expense', 'Accounts Receivable', 'Accounts Payable', 'Inventory'];
-      const investingCategories = ['Fixed Assets', 'Investments', 'Intangible Assets'];
-      const financingCategories = ['Loans', 'Equity', 'Dividends'];
-      
-      // Process cash transactions
-      transactions.forEach(transaction => {
-        const account = accounts.find(a => a.code === transaction.accountCode);
-        if (!account) return;
+
+      console.log('API Response:', response);
+
+      if (response.status === 200) {
+        console.log('Cash flow data:', response.data);
         
-        // Skip non-cash transactions
-        const isCashTransaction = cashAccounts.some(cashAccount => 
-          transaction.accountCode === cashAccount.code || 
-          transaction.relatedAccountCode === cashAccount.code
-        );
-        
-        if (!isCashTransaction) return;
-        
-        const amount = parseFloat(transaction.amount || 0);
-        const isInflow = transaction.type === 'credit';
-        const flowAmount = isInflow ? amount : -amount;
-        
-        const category = account.category || 'Other';
-        
-        // Determine activity type based on account category
-        if (operatingCategories.includes(category)) {
-          operatingActivities.push({
-            date: transaction.date,
-            description: transaction.description,
-            account: account.name,
-            category,
-            amount: flowAmount
-          });
-        } else if (investingCategories.includes(category)) {
-          investingActivities.push({
-            date: transaction.date,
-            description: transaction.description,
-            account: account.name,
-            category,
-            amount: flowAmount
-          });
-        } else if (financingCategories.includes(category)) {
-          financingActivities.push({
-            date: transaction.date,
-            description: transaction.description,
-            account: account.name,
-            category,
-            amount: flowAmount
-          });
+        let data;
+        // Check if response has the expected structure
+        if (response.data && response.data.data) {
+          console.log('Setting cash flow data from response.data.data');
+          data = response.data.data;
+        } else {
+          console.log('Setting cash flow data from response.data');
+          data = response.data;
         }
-      });
-      
-      // Group by category and calculate totals
-      const groupByCategory = (activities) => {
-        return activities.reduce((acc, activity) => {
-          const category = activity.category;
-          if (!acc[category]) {
-            acc[category] = {
-              category,
-              transactions: [],
-              total: 0
-            };
-          }
-          
-          acc[category].transactions.push(activity);
-          acc[category].total += activity.amount;
-          
-          return acc;
-        }, {});
-      };
-      
-      const groupedOperating = groupByCategory(operatingActivities);
-      const groupedInvesting = groupByCategory(investingActivities);
-      const groupedFinancing = groupByCategory(financingActivities);
-      
-      // Update state with processed data
-      setCashFlowData({
-        operating: Object.values(groupedOperating),
-        investing: Object.values(groupedInvesting),
-        financing: Object.values(groupedFinancing),
-        startDate,
-        endDate
-      });
-    } catch (error) {
-      console.error('Error fetching cash flow data:', error);
-      
-      setError('Failed to load cash flow data. Please try again later.');
-      
-      // Set demo data for preview
-      setCashFlowData({
-        operating: [
-          {
-            category: 'Revenue',
-            transactions: [
-              { description: 'Project payment', account: 'Bank BCA', amount: 50000000 },
-              { description: 'Service fee', account: 'Cash', amount: 25000000 }
-            ],
-            total: 75000000
+        
+        // Ensure data has the correct structure
+        const safeData = {
+          operating: data.operating || { activities: [] },
+          investing: data.investing || { activities: [] },
+          financing: data.financing || { activities: [] },
+          summary: data.summary || {
+            totalOperating: 0,
+            totalInvesting: 0,
+            totalFinancing: 0,
+            netCashFlow: 0
           },
-          {
-            category: 'Expense',
-            transactions: [
-              { description: 'Office rent', account: 'Bank BCA', amount: -10000000 },
-              { description: 'Salaries', account: 'Bank BCA', amount: -25000000 }
-            ],
-            total: -35000000
-          }
-        ],
-        investing: [
-          {
-            category: 'Fixed Assets',
-            transactions: [
-              { description: 'Equipment purchase', account: 'Bank BCA', amount: -15000000 }
-            ],
-            total: -15000000
-          }
-        ],
-        financing: [
-          {
-            category: 'Loans',
-            transactions: [
-              { description: 'Loan repayment', account: 'Bank BCA', amount: -5000000 }
-            ],
-            total: -5000000
-          }
-        ],
-        startDate,
-        endDate
-      });
+          period: data.period || '',
+        };
+        
+        setCashFlowData(safeData);
+        setTotals(calculateTotalsFromData(safeData));
+      }
+    } catch (err) {
+      console.error('Error fetching cash flow data:', err);
+      setError('Failed to fetch cash flow data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -256,21 +165,25 @@ const CashFlowPage = () => {
     fetchCashFlowData();
   }, [startDate, endDate]);
 
-  // Calculate totals
-  const calculateTotals = () => {
-    const operatingTotal = cashFlowData.operating.reduce((sum, category) => sum + category.total, 0);
-    const investingTotal = cashFlowData.investing.reduce((sum, category) => sum + category.total, 0);
-    const financingTotal = cashFlowData.financing.reduce((sum, category) => sum + category.total, 0);
+  // Update the calculateTotals function to return the values instead of using setTotals directly
+  const calculateTotalsFromData = (data) => {
+    if (!data || !data.summary) {
+      return {
+        totalOperating: 0,
+        totalInvesting: 0,
+        totalFinancing: 0,
+        netCashFlow: 0
+      };
+    }
     
-    return {
-      operatingTotal,
-      investingTotal,
-      financingTotal,
-      netCashFlow: operatingTotal + investingTotal + financingTotal
-    };
+    // Safely extract values with defaults
+    const totalOperating = data.summary.totalOperating || 0;
+    const totalInvesting = data.summary.totalInvesting || 0;
+    const totalFinancing = data.summary.totalFinancing || 0;
+    const netCashFlow = data.summary.netCashFlow || 0;
+    
+    return { totalOperating, totalInvesting, totalFinancing, netCashFlow };
   };
-  
-  const totals = calculateTotals();
 
   // Handle date change
   const handleStartDateChange = (e) => {
@@ -284,13 +197,7 @@ const CashFlowPage = () => {
   // Handle export completion
   const handleExportComplete = (format, file, option) => {
     console.log(`Export completed in ${format} format with option: ${option}`);
-    toast({
-      title: 'Export Berhasil',
-      description: `Data telah diexport dalam format ${format.toUpperCase()}`,
-      status: 'success',
-      duration: 3000,
-      isClosable: true,
-    });
+    // Notifikasi dihapus karena sudah ditangani oleh CashFlowExportButton
   };
 
   // Go back to reports page
@@ -298,336 +205,332 @@ const CashFlowPage = () => {
     router.push('/reports');
   };
 
-  return (
-    <Box p={4}>
-      <Flex justify="space-between" align="center" mb={6}>
-        <HStack>
-          <IconButton
-            icon={<FiArrowLeft />}
-            aria-label="Go back"
-            variant="ghost"
-            onClick={goBack}
-            mr={2}
-          />
-          <Heading as="h1" size="lg">
-            Cash Flow Report
-          </Heading>
-        </HStack>
-        <HStack spacing={2}>
-          <CashFlowExportButton 
-            cashFlowData={cashFlowData}
-            totals={totals}
-            startDate={startDate}
-            endDate={endDate}
-            formatCurrency={formatCurrency}
-            formatDate={formatDate}
-            onExport={handleExportComplete}
-            isDisabled={loading || !!error || (cashFlowData.operating.length === 0 && cashFlowData.investing.length === 0 && cashFlowData.financing.length === 0)}
-          />
-          <Button 
-            leftIcon={<FiFilter />} 
-            colorScheme="blue" 
-            variant="outline"
-            size="sm"
-          >
-            Filter
-          </Button>
-        </HStack>
-      </Flex>
+  // Render operating activities
+  const renderOperatingActivities = () => {
+    if (!cashFlowData.operating || !cashFlowData.operating.activities || cashFlowData.operating.activities.length === 0) {
+      return (
+        <Box p={4} textAlign="center">
+          <Text>No operating activities recorded for the selected period.</Text>
+        </Box>
+      );
+    }
+    
+    return (
+      <Table variant="simple" size="sm">
+        <Thead>
+          <Tr>
+            <Th>Date</Th>
+            <Th>Description</Th>
+            <Th>Account</Th>
+            <Th isNumeric>Amount</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {cashFlowData.operating.activities.map((activity, index) => (
+            <Tr key={`operating-${index}`}>
+              <Td>{formatDate(activity.date)}</Td>
+              <Td>{activity.description}</Td>
+              <Td>{activity.accountName}</Td>
+              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(activity.amount)}
+              </Td>
+            </Tr>
+          ))}
+          <Tr fontWeight="bold" bg="gray.50">
+            <Td colSpan={3}>Total Operating Activities</Td>
+            <Td isNumeric color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalOperating)}
+            </Td>
+          </Tr>
+        </Tbody>
+      </Table>
+    );
+  };
 
-      {/* Date Range Selection */}
-      <Box mb={6} p={4} bg={cardBg} borderRadius="md" shadow="sm">
-        <Stack direction={{ base: 'column', md: 'row' }} spacing={4} align={{ base: 'flex-start', md: 'center' }}>
-          <FormControl maxW={{ base: 'full', md: '200px' }}>
-            <FormLabel>Start Date:</FormLabel>
-            <input
-              type="date"
-              value={startDate}
-              onChange={handleStartDateChange}
-              style={{
-                padding: '8px',
-                borderRadius: '4px',
-                border: '1px solid #e2e8f0',
-                width: '100%'
-              }}
-            />
-          </FormControl>
-          
-          <FormControl maxW={{ base: 'full', md: '200px' }}>
-            <FormLabel>End Date:</FormLabel>
-            <input
-              type="date"
-              value={endDate}
-              onChange={handleEndDateChange}
-              style={{
-                padding: '8px',
-                borderRadius: '4px',
-                border: '1px solid #e2e8f0',
-                width: '100%'
-              }}
-            />
-          </FormControl>
-        </Stack>
+  // Render investing activities
+  const renderInvestingActivities = () => {
+    if (!cashFlowData.investing || !cashFlowData.investing.activities || cashFlowData.investing.activities.length === 0) {
+      return (
+        <Box p={4} textAlign="center">
+          <Text>No investing activities recorded for the selected period.</Text>
+        </Box>
+      );
+    }
+    
+    return (
+      <Table variant="simple" size="sm">
+        <Thead>
+          <Tr>
+            <Th>Date</Th>
+            <Th>Description</Th>
+            <Th>Account</Th>
+            <Th isNumeric>Amount</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {cashFlowData.investing.activities.map((activity, index) => (
+            <Tr key={`investing-${index}`}>
+              <Td>{formatDate(activity.date)}</Td>
+              <Td>{activity.description}</Td>
+              <Td>{activity.accountName}</Td>
+              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(activity.amount)}
+              </Td>
+            </Tr>
+          ))}
+          <Tr fontWeight="bold" bg="gray.50">
+            <Td colSpan={3}>Total Investing Activities</Td>
+            <Td isNumeric color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalInvesting)}
+            </Td>
+          </Tr>
+        </Tbody>
+      </Table>
+    );
+  };
+
+  // Render financing activities
+  const renderFinancingActivities = () => {
+    if (!cashFlowData.financing || !cashFlowData.financing.activities || cashFlowData.financing.activities.length === 0) {
+      return (
+        <Box p={4} textAlign="center">
+          <Text>No financing activities recorded for the selected period.</Text>
+        </Box>
+      );
+    }
+    
+    return (
+      <Table variant="simple" size="sm">
+        <Thead>
+          <Tr>
+            <Th>Date</Th>
+            <Th>Description</Th>
+            <Th>Account</Th>
+            <Th isNumeric>Amount</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {cashFlowData.financing.activities.map((activity, index) => (
+            <Tr key={`financing-${index}`}>
+              <Td>{formatDate(activity.date)}</Td>
+              <Td>{activity.description}</Td>
+              <Td>{activity.accountName}</Td>
+              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(activity.amount)}
+              </Td>
+            </Tr>
+          ))}
+          <Tr fontWeight="bold" bg="gray.50">
+            <Td colSpan={3}>Total Financing Activities</Td>
+            <Td isNumeric color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalFinancing)}
+            </Td>
+          </Tr>
+        </Tbody>
+      </Table>
+    );
+  };
+
+  // Render summary section
+  const renderSummary = () => {
+    return (
+      <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
+        <Heading size="md" mb={4}>Cash Flow Summary</Heading>
+        <Table variant="simple" size="sm">
+          <Tbody>
+            <Tr>
+              <Td fontWeight="bold">Cash Flow from Operating Activities</Td>
+              <Td isNumeric color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalOperating)}
+              </Td>
+            </Tr>
+            <Tr>
+              <Td fontWeight="bold">Cash Flow from Investing Activities</Td>
+              <Td isNumeric color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalInvesting)}
+              </Td>
+            </Tr>
+            <Tr>
+              <Td fontWeight="bold">Cash Flow from Financing Activities</Td>
+              <Td isNumeric color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalFinancing)}
+              </Td>
+            </Tr>
+            <Tr fontWeight="bold" fontSize="lg">
+              <Td>Net Cash Flow</Td>
+              <Td isNumeric color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.netCashFlow)}
+              </Td>
+            </Tr>
+          </Tbody>
+        </Table>
       </Box>
+    );
+  };
 
-      {/* Summary Cards */}
-      <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Operating Activities</StatLabel>
-          <StatNumber color={totals.operatingTotal >= 0 ? 'green.500' : 'red.500'}>
-            {formatCurrency(totals.operatingTotal)}
-          </StatNumber>
-          <StatHelpText>
-            <StatArrow type={totals.operatingTotal >= 0 ? 'increase' : 'decrease'} />
-            Main business operations
-          </StatHelpText>
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Investing Activities</StatLabel>
-          <StatNumber color={totals.investingTotal >= 0 ? 'green.500' : 'red.500'}>
-            {formatCurrency(totals.investingTotal)}
-          </StatNumber>
-          <StatHelpText>
-            <StatArrow type={totals.investingTotal >= 0 ? 'increase' : 'decrease'} />
-            Assets & investments
-          </StatHelpText>
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Financing Activities</StatLabel>
-          <StatNumber color={totals.financingTotal >= 0 ? 'green.500' : 'red.500'}>
-            {formatCurrency(totals.financingTotal)}
-          </StatNumber>
-          <StatHelpText>
-            <StatArrow type={totals.financingTotal >= 0 ? 'increase' : 'decrease'} />
-            Debt & equity
-          </StatHelpText>
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm" borderLeft="4px solid" borderLeftColor={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-          <StatLabel>Net Cash Flow</StatLabel>
-          <StatNumber color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-            {formatCurrency(totals.netCashFlow)}
-          </StatNumber>
-          <StatHelpText>
-            <StatArrow type={totals.netCashFlow >= 0 ? 'increase' : 'decrease'} />
-            Total change in cash
-          </StatHelpText>
-        </Stat>
-      </SimpleGrid>
+  // Helper function to format date range for display
+  const formatDateRange = (start, end) => {
+    return `${moment(start).format('MMM D, YYYY')} - ${moment(end).format('MMM D, YYYY')}`;
+  };
 
-      {error && <ErrorAlert message={error} />}
+  return (
+    <ProtectedRoute>
+      <Box p={4}>
+        <Box mb={6}>
+          <Flex direction={{ base: "column", md: "row" }} justify="space-between" align="center" mb={4}>
+            <HStack>
+              <IconButton
+                icon={<FiArrowLeft />}
+                aria-label="Go back"
+                variant="ghost"
+                onClick={goBack}
+              />
+              <Heading as="h1" size="lg" mb={{ base: 0, md: 0 }}>Cash Flow Statement</Heading>
+            </HStack>
+            <HStack>
+              <CashFlowExportButton 
+                cashFlowData={cashFlowData}
+                totals={totals}
+                startDate={startDate}
+                endDate={endDate}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+                onExport={handleExportComplete}
+                isDisabled={loading || !!error || !cashFlowData || 
+                  (!cashFlowData.operating?.activities?.length && 
+                   !cashFlowData.investing?.activities?.length && 
+                   !cashFlowData.financing?.activities?.length)}
+              />
+            </HStack>
+          </Flex>
 
-      {loading ? (
-        <LoadingSpinner text="Loading cash flow data..." />
-      ) : (
-        <Tabs variant="enclosed" colorScheme="blue">
-          <TabList>
-            <Tab>Operating Activities</Tab>
-            <Tab>Investing Activities</Tab>
-            <Tab>Financing Activities</Tab>
-            <Tab>Summary</Tab>
-          </TabList>
+          <Card mb={4}>
+            <CardBody>
+              <VStack spacing={4} align="stretch">
+                <FormControl>
+                  <FormLabel>Date Range</FormLabel>
+                  <Flex gap={2} align="center">
+                    <Input
+                      type="date"
+                      value={startDate}
+                      onChange={handleStartDateChange}
+                    />
+                    <Text>to</Text>
+                    <Input
+                      type="date"
+                      value={endDate}
+                      onChange={handleEndDateChange}
+                    />
+                  </Flex>
+                </FormControl>
+                
+                <Button 
+                  colorScheme="blue" 
+                  onClick={fetchCashFlowData} 
+                  isLoading={loading}
+                  alignSelf="flex-end"
+                >
+                  Generate Report
+                </Button>
+              </VStack>
+            </CardBody>
+          </Card>
+        </Box>
 
-          <TabPanels>
-            {/* Operating Activities Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Cash Flow from Operating Activities</Heading>
-                {cashFlowData.operating.length === 0 ? (
-                  <EmptyState 
-                    title="No operating activities" 
-                    message="There are no operating activities recorded for the selected period."
-                  />
-                ) : (
-                  <Table variant="simple">
-                    <Thead>
-                      <Tr>
-                        <Th>Category</Th>
-                        <Th>Description</Th>
-                        <Th isNumeric>Amount</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {cashFlowData.operating.map((category, index) => (
-                        <React.Fragment key={`operating-${index}`}>
-                          <Tr bg="gray.50" _dark={{ bg: "gray.700" }}>
-                            <Td colSpan={2} fontWeight="bold">{category.category}</Td>
-                            <Td isNumeric fontWeight="bold">{formatCurrency(category.total)}</Td>
-                          </Tr>
-                          {category.transactions.map((transaction, tIndex) => (
-                            <Tr key={`operating-${index}-${tIndex}`}>
-                              <Td></Td>
-                              <Td>{transaction.description} ({transaction.account})</Td>
-                              <Td isNumeric color={transaction.amount >= 0 ? 'green.500' : 'red.500'}>
-                                {formatCurrency(transaction.amount)}
-                              </Td>
-                            </Tr>
-                          ))}
-                        </React.Fragment>
-                      ))}
-                    </Tbody>
-                    <Thead>
-                      <Tr>
-                        <Th colSpan={2}>Total Operating Activities</Th>
-                        <Th isNumeric color={totals.operatingTotal >= 0 ? 'green.500' : 'red.500'}>
-                          {formatCurrency(totals.operatingTotal)}
-                        </Th>
-                      </Tr>
-                    </Thead>
-                  </Table>
-                )}
-              </Box>
-            </TabPanel>
+        {/* Summary Cards */}
+        <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
+          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+            <StatLabel>Operating Activities</StatLabel>
+            <StatNumber color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalOperating)}
+            </StatNumber>
+            <StatHelpText>
+              <StatArrow type={totals.totalOperating >= 0 ? 'increase' : 'decrease'} />
+              Main business operations
+            </StatHelpText>
+          </Stat>
+          
+          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+            <StatLabel>Investing Activities</StatLabel>
+            <StatNumber color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalInvesting)}
+            </StatNumber>
+            <StatHelpText>
+              <StatArrow type={totals.totalInvesting >= 0 ? 'increase' : 'decrease'} />
+              Assets & investments
+            </StatHelpText>
+          </Stat>
+          
+          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+            <StatLabel>Financing Activities</StatLabel>
+            <StatNumber color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.totalFinancing)}
+            </StatNumber>
+            <StatHelpText>
+              <StatArrow type={totals.totalFinancing >= 0 ? 'increase' : 'decrease'} />
+              Debt & equity
+            </StatHelpText>
+          </Stat>
+          
+          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm" borderLeft="4px solid" borderLeftColor={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
+            <StatLabel>Net Cash Flow</StatLabel>
+            <StatNumber color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
+              {formatCurrency(totals.netCashFlow)}
+            </StatNumber>
+            <StatHelpText>
+              <StatArrow type={totals.netCashFlow >= 0 ? 'increase' : 'decrease'} />
+              Total change in cash
+            </StatHelpText>
+          </Stat>
+        </SimpleGrid>
 
-            {/* Investing Activities Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Cash Flow from Investing Activities</Heading>
-                {cashFlowData.investing.length === 0 ? (
-                  <EmptyState 
-                    title="No investing activities" 
-                    message="There are no investing activities recorded for the selected period."
-                  />
-                ) : (
-                  <Table variant="simple">
-                    <Thead>
-                      <Tr>
-                        <Th>Category</Th>
-                        <Th>Description</Th>
-                        <Th isNumeric>Amount</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {cashFlowData.investing.map((category, index) => (
-                        <React.Fragment key={`investing-${index}`}>
-                          <Tr bg="gray.50" _dark={{ bg: "gray.700" }}>
-                            <Td colSpan={2} fontWeight="bold">{category.category}</Td>
-                            <Td isNumeric fontWeight="bold">{formatCurrency(category.total)}</Td>
-                          </Tr>
-                          {category.transactions.map((transaction, tIndex) => (
-                            <Tr key={`investing-${index}-${tIndex}`}>
-                              <Td></Td>
-                              <Td>{transaction.description} ({transaction.account})</Td>
-                              <Td isNumeric color={transaction.amount >= 0 ? 'green.500' : 'red.500'}>
-                                {formatCurrency(transaction.amount)}
-                              </Td>
-                            </Tr>
-                          ))}
-                        </React.Fragment>
-                      ))}
-                    </Tbody>
-                    <Thead>
-                      <Tr>
-                        <Th colSpan={2}>Total Investing Activities</Th>
-                        <Th isNumeric color={totals.investingTotal >= 0 ? 'green.500' : 'red.500'}>
-                          {formatCurrency(totals.investingTotal)}
-                        </Th>
-                      </Tr>
-                    </Thead>
-                  </Table>
-                )}
-              </Box>
-            </TabPanel>
+        {error && <ErrorAlert message={error} />}
 
-            {/* Financing Activities Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Cash Flow from Financing Activities</Heading>
-                {cashFlowData.financing.length === 0 ? (
-                  <EmptyState 
-                    title="No financing activities" 
-                    message="There are no financing activities recorded for the selected period."
-                  />
-                ) : (
-                  <Table variant="simple">
-                    <Thead>
-                      <Tr>
-                        <Th>Category</Th>
-                        <Th>Description</Th>
-                        <Th isNumeric>Amount</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {cashFlowData.financing.map((category, index) => (
-                        <React.Fragment key={`financing-${index}`}>
-                          <Tr bg="gray.50" _dark={{ bg: "gray.700" }}>
-                            <Td colSpan={2} fontWeight="bold">{category.category}</Td>
-                            <Td isNumeric fontWeight="bold">{formatCurrency(category.total)}</Td>
-                          </Tr>
-                          {category.transactions.map((transaction, tIndex) => (
-                            <Tr key={`financing-${index}-${tIndex}`}>
-                              <Td></Td>
-                              <Td>{transaction.description} ({transaction.account})</Td>
-                              <Td isNumeric color={transaction.amount >= 0 ? 'green.500' : 'red.500'}>
-                                {formatCurrency(transaction.amount)}
-                              </Td>
-                            </Tr>
-                          ))}
-                        </React.Fragment>
-                      ))}
-                    </Tbody>
-                    <Thead>
-                      <Tr>
-                        <Th colSpan={2}>Total Financing Activities</Th>
-                        <Th isNumeric color={totals.financingTotal >= 0 ? 'green.500' : 'red.500'}>
-                          {formatCurrency(totals.financingTotal)}
-                        </Th>
-                      </Tr>
-                    </Thead>
-                  </Table>
-                )}
-              </Box>
-            </TabPanel>
+        {loading ? (
+          <LoadingSpinner text="Loading cash flow data..." />
+        ) : (
+          <Tabs variant="enclosed" colorScheme="blue">
+            <TabList>
+              <Tab>Operating Activities</Tab>
+              <Tab>Investing Activities</Tab>
+              <Tab>Financing Activities</Tab>
+              <Tab>Summary</Tab>
+            </TabList>
 
-            {/* Summary Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Cash Flow Summary</Heading>
-                <Table variant="simple">
-                  <Thead>
-                    <Tr>
-                      <Th>Activity Type</Th>
-                      <Th isNumeric>Amount</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    <Tr>
-                      <Td fontWeight="medium">Cash Flow from Operating Activities</Td>
-                      <Td isNumeric color={totals.operatingTotal >= 0 ? 'green.500' : 'red.500'}>
-                        {formatCurrency(totals.operatingTotal)}
-                      </Td>
-                    </Tr>
-                    <Tr>
-                      <Td fontWeight="medium">Cash Flow from Investing Activities</Td>
-                      <Td isNumeric color={totals.investingTotal >= 0 ? 'green.500' : 'red.500'}>
-                        {formatCurrency(totals.investingTotal)}
-                      </Td>
-                    </Tr>
-                    <Tr>
-                      <Td fontWeight="medium">Cash Flow from Financing Activities</Td>
-                      <Td isNumeric color={totals.financingTotal >= 0 ? 'green.500' : 'red.500'}>
-                        {formatCurrency(totals.financingTotal)}
-                      </Td>
-                    </Tr>
-                  </Tbody>
-                </Table>
-                <Divider my={4} />
-                <Flex justify="space-between" p={3} bg={totals.netCashFlow >= 0 ? "green.50" : "red.50"} 
-                  _dark={{ bg: totals.netCashFlow >= 0 ? "green.900" : "red.900" }} 
-                  borderRadius="md">
-                  <Text fontWeight="bold">Net Increase (Decrease) in Cash</Text>
-                  <Text fontWeight="bold" color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-                    {formatCurrency(totals.netCashFlow)}
-                  </Text>
-                </Flex>
-              </Box>
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      )}
-    </Box>
+            <TabPanels>
+              {/* Operating Activities Tab */}
+              <TabPanel>
+                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
+                  <Heading size="md" mb={4}>Cash Flow from Operating Activities</Heading>
+                  {renderOperatingActivities()}
+                </Box>
+              </TabPanel>
+
+              {/* Investing Activities Tab */}
+              <TabPanel>
+                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
+                  <Heading size="md" mb={4}>Cash Flow from Investing Activities</Heading>
+                  {renderInvestingActivities()}
+                </Box>
+              </TabPanel>
+
+              {/* Financing Activities Tab */}
+              <TabPanel>
+                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
+                  <Heading size="md" mb={4}>Cash Flow from Financing Activities</Heading>
+                  {renderFinancingActivities()}
+                </Box>
+              </TabPanel>
+
+              {/* Summary Tab */}
+              <TabPanel>
+                {renderSummary()}
+              </TabPanel>
+            </TabPanels>
+          </Tabs>
+        )}
+      </Box>
+    </ProtectedRoute>
   );
 };
 
