@@ -374,121 +374,98 @@ const CashFlowPage = () => {
   };
 
   return (
-    <ProtectedRoute>
-      <Box p={4}>
-        <Box mb={6}>
-          <Flex direction={{ base: "column", md: "row" }} justify="space-between" align="center" mb={4}>
-            <HStack>
-              <IconButton
-                icon={<FiArrowLeft />}
-                aria-label="Go back"
-                variant="ghost"
-                onClick={goBack}
-              />
-              <Heading as="h1" size="lg" mb={{ base: 0, md: 0 }}>Cash Flow Statement</Heading>
-            </HStack>
-            <HStack>
-              <CashFlowExportButton 
-                cashFlowData={cashFlowData}
-                totals={totals}
-                startDate={startDate}
-                endDate={endDate}
-                formatCurrency={formatCurrency}
-                formatDate={formatDate}
-                onExport={handleExportComplete}
-                isDisabled={loading || !!error || !cashFlowData || 
-                  (!cashFlowData.operating?.activities?.length && 
-                   !cashFlowData.investing?.activities?.length && 
-                   !cashFlowData.financing?.activities?.length)}
-              />
-            </HStack>
-          </Flex>
-
-          <Card mb={4}>
-            <CardBody>
-              <VStack spacing={4} align="stretch">
-                <FormControl>
-                  <FormLabel>Date Range</FormLabel>
-                  <Flex gap={2} align="center">
-                    <Input
-                      type="date"
-                      value={startDate}
-                      onChange={handleStartDateChange}
-                    />
-                    <Text>to</Text>
-                    <Input
-                      type="date"
-                      value={endDate}
-                      onChange={handleEndDateChange}
-                    />
-                  </Flex>
-                </FormControl>
-                
-                <Button 
-                  colorScheme="blue" 
-                  onClick={fetchCashFlowData} 
-                  isLoading={loading}
-                  alignSelf="flex-end"
-                >
-                  Generate Report
-                </Button>
-              </VStack>
-            </CardBody>
-          </Card>
-        </Box>
-
-        {/* Summary Cards */}
-        <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
-          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-            <StatLabel>Operating Activities</StatLabel>
-            <StatNumber color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalOperating)}
-            </StatNumber>
-            <StatHelpText>
-              <StatArrow type={totals.totalOperating >= 0 ? 'increase' : 'decrease'} />
-              Main business operations
-            </StatHelpText>
-          </Stat>
+    <Box p={4}>
+      <Flex 
+        direction={{ base: 'column', md: 'row' }} 
+        justify="space-between" 
+        align={{ base: 'flex-start', md: 'center' }} 
+        mb={6}
+      >
+        <Flex align="center" mb={{ base: 4, md: 0 }}>
+          <IconButton
+            icon={<FaArrowLeft />}
+            onClick={goBack}
+            mr={2}
+            aria-label="Back"
+            size="md"
+            variant="outline"
+          />
+          <Heading size="lg">Cash Flow Statement</Heading>
+        </Flex>
+        
+        <Flex align="center" wrap="wrap" gap={2}>
+          <FormControl maxW="180px">
+            <Input
+              type="date"
+              value={startDate}
+              onChange={handleStartDateChange}
+              size="sm"
+            />
+          </FormControl>
+          <Text>to</Text>
+          <FormControl maxW="180px">
+            <Input
+              type="date"
+              value={endDate}
+              onChange={handleEndDateChange}
+              size="sm"
+            />
+          </FormControl>
           
-          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-            <StatLabel>Investing Activities</StatLabel>
-            <StatNumber color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalInvesting)}
-            </StatNumber>
-            <StatHelpText>
-              <StatArrow type={totals.totalInvesting >= 0 ? 'increase' : 'decrease'} />
-              Assets & investments
-            </StatHelpText>
-          </Stat>
-          
-          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-            <StatLabel>Financing Activities</StatLabel>
-            <StatNumber color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalFinancing)}
-            </StatNumber>
-            <StatHelpText>
-              <StatArrow type={totals.totalFinancing >= 0 ? 'increase' : 'decrease'} />
-              Debt & equity
-            </StatHelpText>
-          </Stat>
-          
-          <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm" borderLeft="4px solid" borderLeftColor={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-            <StatLabel>Net Cash Flow</StatLabel>
-            <StatNumber color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.netCashFlow)}
-            </StatNumber>
-            <StatHelpText>
-              <StatArrow type={totals.netCashFlow >= 0 ? 'increase' : 'decrease'} />
-              Total change in cash
-            </StatHelpText>
-          </Stat>
-        </SimpleGrid>
+          <CashFlowExportButton 
+            startDate={startDate}
+            endDate={endDate}
+            onExportComplete={handleExportComplete}
+          />
+        </Flex>
+      </Flex>
 
-        {error && <ErrorAlert message={error} />}
+      {error && <ErrorAlert message={error} />}
 
-        {loading ? (
-          <LoadingSpinner text="Loading cash flow data..." />
-        ) : (
+      {loading ? (
+        <Stack spacing={4}>
+          <Skeleton height="40px" />
+          <Skeleton height="200px" />
+          <Skeleton height="200px" />
+          <Skeleton height="200px" />
+        </Stack>
+      ) : (
+        <>
+          <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
+            <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
+              <StatLabel>Operating Cash Flow</StatLabel>
+              <StatNumber color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalOperating)}
+              </StatNumber>
+            </Stat>
+            <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
+              <StatLabel>Investing Cash Flow</StatLabel>
+              <StatNumber color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalInvesting)}
+              </StatNumber>
+            </Stat>
+            <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
+              <StatLabel>Financing Cash Flow</StatLabel>
+              <StatNumber color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.totalFinancing)}
+              </StatNumber>
+            </Stat>
+            <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
+              <StatLabel>Net Cash Flow</StatLabel>
+              <StatNumber color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
+                {formatCurrency(totals.netCashFlow)}
+              </StatNumber>
+              <StatHelpText>
+                {totals.netCashFlow >= 0 ? (
+                  <StatArrow type="increase" />
+                ) : (
+                  <StatArrow type="decrease" />
+                )}
+                Period: {formatDateRange(startDate, endDate)}
+              </StatHelpText>
+            </Stat>
+          </SimpleGrid>
+
           <Tabs variant="enclosed" colorScheme="blue">
             <TabList>
               <Tab>Operating Activities</Tab>
@@ -496,41 +473,16 @@ const CashFlowPage = () => {
               <Tab>Financing Activities</Tab>
               <Tab>Summary</Tab>
             </TabList>
-
             <TabPanels>
-              {/* Operating Activities Tab */}
-              <TabPanel>
-                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                  <Heading size="md" mb={4}>Cash Flow from Operating Activities</Heading>
-                  {renderOperatingActivities()}
-                </Box>
-              </TabPanel>
-
-              {/* Investing Activities Tab */}
-              <TabPanel>
-                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                  <Heading size="md" mb={4}>Cash Flow from Investing Activities</Heading>
-                  {renderInvestingActivities()}
-                </Box>
-              </TabPanel>
-
-              {/* Financing Activities Tab */}
-              <TabPanel>
-                <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                  <Heading size="md" mb={4}>Cash Flow from Financing Activities</Heading>
-                  {renderFinancingActivities()}
-                </Box>
-              </TabPanel>
-
-              {/* Summary Tab */}
-              <TabPanel>
-                {renderSummary()}
-              </TabPanel>
+              <TabPanel>{renderOperatingActivities()}</TabPanel>
+              <TabPanel>{renderInvestingActivities()}</TabPanel>
+              <TabPanel>{renderFinancingActivities()}</TabPanel>
+              <TabPanel>{renderSummary()}</TabPanel>
             </TabPanels>
           </Tabs>
-        )}
-      </Box>
-    </ProtectedRoute>
+        </>
+      )}
+    </Box>
   );
 };
 
