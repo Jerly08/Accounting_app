@@ -10,6 +10,8 @@
     "prisma:migrate": "prisma migrate dev",
     "seed": "node prisma/seed.js",
     "seed:transactions": "node prisma/transaction-seed.js",
+    "seed:cashflow": "node prisma/cashflow-seed.js",
+    "seed:liabilities": "node prisma/liability-seed.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "prisma": {
