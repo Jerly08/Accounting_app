@@ -1,52 +1,41 @@
-# Node.js
+# Node modules
 node_modules/
-npm-debug.log
-yarn-debug.log
-yarn-error.log
 
 # Environment variables
 .env
 .env.local
-.env.development
-.env.test
-.env.production
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Build files
-/dist
-/build
-
-# Next.js
+# Next.js build output
 .next/
 out/
 
-# IDE files
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
-
-# Logs
-logs
-*.log
+# Log files
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# OS generated files
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Testing
-/coverage
+# Prisma migration files
+# prisma/migrations/
 
-# Prisma
-/prisma/.env
+# Package lock files
+package-lock.json
+yarn.lock
 
-# Misc
-.cache/
-.temp/ 
+# Debug files
+*.log 
