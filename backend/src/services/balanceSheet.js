@@ -6,6 +6,22 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 /**
+ * Map Indonesian account types to standard types
+ */
+const accountTypeMap = {
+  'Aktiva': 'asset',
+  'Aset': 'asset',
+  'Aset Tetap': 'asset',
+  'Kontra Aset': 'asset', // This is a contra asset, but still an asset account
+  'Kewajiban': 'liability',
+  'Hutang': 'liability',
+  'Ekuitas': 'equity',
+  'Modal': 'equity',
+  'Pendapatan': 'revenue',
+  'Beban': 'expense'
+};
+
+/**
  * Menghasilkan data neraca keuangan pada tanggal tertentu
  * @param {string} date - Tanggal neraca (YYYY-MM-DD)
  * @returns {Promise<Object>} - Data neraca keuangan
@@ -67,6 +83,7 @@ const generateBalanceSheet = async (date) => {
     accounts.forEach(account => {
       accountBalances[account.code] = {
         ...account,
+        standardType: accountTypeMap[account.type] || account.type,
         balance: 0
       };
     });
@@ -74,7 +91,7 @@ const generateBalanceSheet = async (date) => {
     // Process transactions to calculate account balances
     transactions.forEach(transaction => {
       const { accountCode, type, amount } = transaction;
-      const account = accounts.find(a => a.code === accountCode);
+      const account = accountBalances[accountCode];
       
       if (account) {
         // Apply accounting rules based on account type and transaction type
@@ -83,18 +100,29 @@ const generateBalanceSheet = async (date) => {
         const isDebitType = ['debit', 'expense', 'WIP_INCREASE'].includes(type);
         const isCreditType = ['credit', 'income', 'WIP_DECREASE', 'REVENUE'].includes(type);
         
-        if (account.type === 'Aset' || account.type === 'asset') {
+        // Use standardized account type for determining accounting rules
+        if (account.standardType === 'asset') {
           if (isDebitType) {
-            accountBalances[accountCode].balance += parseFloat(amount);
+            account.balance += parseFloat(amount);
           } else if (isCreditType) {
-            accountBalances[accountCode].balance -= parseFloat(amount);
+            account.balance -= parseFloat(amount);
           }
-        } else { // liability or equity (Kewajiban atau Ekuitas)
+        } else { // liability, equity, revenue, expense
           if (isDebitType) {
-            accountBalances[accountCode].balance -= parseFloat(amount);
+            account.balance -= parseFloat(amount);
           } else if (isCreditType) {
-            accountBalances[accountCode].balance += parseFloat(amount);
+            account.balance += parseFloat(amount);
           }
+        }
+      }
+    });
+    
+    // Special handling for contra asset accounts (they have negative balances)
+    accounts.forEach(account => {
+      if (account.type === 'Kontra Aset') {
+        // Ensure contra assets have negative balances (they reduce the value of assets)
+        if (accountBalances[account.code].balance > 0) {
+          accountBalances[account.code].balance = -accountBalances[account.code].balance;
         }
       }
     });
@@ -116,6 +144,7 @@ const generateBalanceSheet = async (date) => {
     
     // 7. Calculate WIP (Work In Progress) for ongoing projects
     let totalWIP = 0;
+    let totalNegativeWIP = 0; // Track negative WIP separately (this is actually a liability)
     const wipItems = projects
       .filter(project => project.status === 'ongoing')
       .map(project => {
@@ -129,9 +158,15 @@ const generateBalanceSheet = async (date) => {
           (sum, billing) => sum + parseFloat(billing.amount), 0
         );
         
-        // WIP value = costs - billings (if positive)
-        const wipValue = Math.max(0, totalCosts - totalBilled);
-        totalWIP += wipValue;
+        // WIP value = costs - billings
+        const wipValue = totalCosts - totalBilled;
+        
+        // Handle positive and negative WIP separately
+        if (wipValue > 0) {
+          totalWIP += wipValue;
+        } else {
+          totalNegativeWIP += Math.abs(wipValue); // Store as positive for liabilities
+        }
         
         return {
           id: project.id,
@@ -141,48 +176,82 @@ const generateBalanceSheet = async (date) => {
           billed: totalBilled,
           wipValue: wipValue
         };
-      })
-      .filter(item => item.wipValue > 0); // Only include positive WIP
+      });
     
-    // 8. Group accounts by type and category
-    const assets = Object.values(accountBalances)
-      .filter(account => account.type === 'Aset' || account.type === 'asset')
-      .reduce((acc, asset) => {
-        const category = asset.category || 'Other Assets';
-        if (!acc[category]) {
-          acc[category] = [];
-        }
-        acc[category].push(asset);
-        return acc;
-      }, {});
+    // 8. Group accounts by standardized type
+    // Filter out fixed asset accounts (15xx) to avoid duplication with fixedasset table
+    const assetAccountsWithoutFixedAssets = Object.values(accountBalances)
+      .filter(account => account.standardType === 'asset' && !account.code.startsWith('15'));
     
-    const liabilities = Object.values(accountBalances)
-      .filter(account => account.type === 'Kewajiban' || account.type === 'liability')
-      .reduce((acc, liability) => {
-        const category = liability.category || 'Other Liabilities';
-        if (!acc[category]) {
-          acc[category] = [];
-        }
-        acc[category].push(liability);
-        return acc;
-      }, {});
+    const assets = assetAccountsWithoutFixedAssets.reduce((acc, asset) => {
+      const category = asset.category || 'Other Assets';
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      acc[category].push(asset);
+      return acc;
+    }, {});
     
+    // Add negative WIP as a liability (Advance from customers)
+    const liabilityAccounts = Object.values(accountBalances)
+      .filter(account => account.standardType === 'liability');
+    
+    // Create a special account for negative WIP if it exists
+    if (totalNegativeWIP > 0) {
+      liabilityAccounts.push({
+        code: 'WIP-NEG',
+        name: 'Advance from Customers (Negative WIP)',
+        type: 'Kewajiban',
+        standardType: 'liability',
+        category: 'Current Liabilities',
+        balance: totalNegativeWIP
+      });
+    }
+    
+    const liabilities = liabilityAccounts.reduce((acc, liability) => {
+      const category = liability.category || 'Other Liabilities';
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      acc[category].push(liability);
+      return acc;
+    }, {});
+    
+    // Filter equity accounts by standardized type
     const equity = Object.values(accountBalances)
-      .filter(account => account.type === 'Ekuitas' || account.type === 'equity');
+      .filter(account => account.standardType === 'equity');
+    
+    // Get revenue and expense accounts for net income calculation
+    const revenue = Object.values(accountBalances)
+      .filter(account => account.standardType === 'revenue');
+    
+    const expense = Object.values(accountBalances)
+      .filter(account => account.standardType === 'expense');
     
     // 9. Calculate totals
-    const totalAccountAssets = Object.values(assets)
-      .flat()
-      .reduce((sum, asset) => sum + asset.balance, 0);
+    const totalAccountAssets = assetAccountsWithoutFixedAssets.reduce(
+      (sum, asset) => sum + asset.balance, 0
+    );
     
-    const totalLiabilities = Object.values(liabilities)
-      .flat()
-      .reduce((sum, liability) => sum + liability.balance, 0);
+    const totalLiabilities = liabilityAccounts.reduce(
+      (sum, liability) => sum + liability.balance, 0
+    );
     
     const totalEquity = equity.reduce((sum, eq) => sum + eq.balance, 0);
     
+    // Calculate net income (revenue - expense) and add to equity
+    const totalRevenue = revenue.reduce((sum, rev) => sum + rev.balance, 0);
+    const totalExpense = expense.reduce((sum, exp) => sum + exp.balance, 0);
+    const netIncome = totalRevenue - totalExpense;
+    
     // Add WIP and Fixed Assets to total assets
     const totalAssets = totalAccountAssets + totalFixedAssets + totalWIP;
+    
+    // Add net income to equity for balance sheet equation
+    const totalEquityWithIncome = totalEquity + netIncome;
+    
+    // Calculate total liabilities and equity
+    const totalLiabilitiesAndEquity = totalLiabilities + totalEquityWithIncome;
     
     // 10. Return formatted balance sheet data
     return {
@@ -192,7 +261,7 @@ const generateBalanceSheet = async (date) => {
         assets: {
           ...assets,
           'Fixed Assets': fixedAssetItems,
-          'Work In Progress': wipItems.length > 0 ? wipItems : undefined
+          'Work In Progress': wipItems.filter(item => item.wipValue > 0) // Only positive WIP as asset
         },
         liabilities,
         equity,
@@ -201,9 +270,13 @@ const generateBalanceSheet = async (date) => {
           totalAccountAssets,
           totalFixedAssets,
           totalWIP,
+          totalNegativeWIP,
           totalLiabilities,
           totalEquity,
-          isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+          netIncome,
+          totalEquityWithIncome,
+          totalLiabilitiesAndEquity,
+          isBalanced: Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01
         }
       }
     };
@@ -244,7 +317,9 @@ const generateComparativeBalanceSheet = async (currentDate, previousDate) => {
     const changes = {
       totalAssets: current.totalAssets - previous.totalAssets,
       totalLiabilities: current.totalLiabilities - previous.totalLiabilities,
-      totalEquity: current.totalEquity - previous.totalEquity
+      totalEquity: current.totalEquity - previous.totalEquity,
+      netIncome: current.netIncome - previous.netIncome,
+      totalEquityWithIncome: current.totalEquityWithIncome - previous.totalEquityWithIncome
     };
     
     const percentChanges = {
@@ -253,7 +328,11 @@ const generateComparativeBalanceSheet = async (currentDate, previousDate) => {
       totalLiabilities: previous.totalLiabilities !== 0 ?
         ((current.totalLiabilities - previous.totalLiabilities) / previous.totalLiabilities) * 100 : 0,
       totalEquity: previous.totalEquity !== 0 ?
-        ((current.totalEquity - previous.totalEquity) / previous.totalEquity) * 100 : 0
+        ((current.totalEquity - previous.totalEquity) / previous.totalEquity) * 100 : 0,
+      netIncome: previous.netIncome !== 0 ?
+        ((current.netIncome - previous.netIncome) / previous.netIncome) * 100 : 0,
+      totalEquityWithIncome: previous.totalEquityWithIncome !== 0 ?
+        ((current.totalEquityWithIncome - previous.totalEquityWithIncome) / previous.totalEquityWithIncome) * 100 : 0
     };
     
     return {

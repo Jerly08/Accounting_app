@@ -82,104 +82,25 @@ const BalanceSheetPage = () => {
     try {
       setLoading(true);
       
-      // Fetch accounts
-      const accountsResponse = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/accounts`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          }
-        }
-      );
-      
-      // Fetch transactions
-      const transactionsResponse = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/transactions`,
+      // Use the dedicated balance sheet API
+      const response = await axios.get(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/balance-sheet`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
           },
           params: {
-            date_before: selectedDate
+            date: selectedDate
           }
         }
       );
       
-      // Process data to create balance sheet
-      const accounts = accountsResponse.data.data;
-      const transactions = transactionsResponse.data.data;
-      
-      // Group accounts by type
-      const assets = accounts.filter(account => account.type === 'asset');
-      const liabilities = accounts.filter(account => account.type === 'liability');
-      const equity = accounts.filter(account => account.type === 'equity');
-      
-      // Calculate balances for each account
-      const calculateAccountBalance = (accountCode) => {
-        return transactions
-          .filter(transaction => transaction.accountCode === accountCode)
-          .reduce((balance, transaction) => {
-            // Debit increases assets, decreases liabilities and equity
-            // Credit decreases assets, increases liabilities and equity
-            const account = accounts.find(a => a.code === accountCode);
-            const amount = parseFloat(transaction.amount || 0);
-            
-            if (account) {
-              if (account.type === 'asset') {
-                return balance + (transaction.type === 'debit' ? amount : -amount);
-              } else {
-                return balance + (transaction.type === 'credit' ? amount : -amount);
-              }
-            }
-            return balance;
-          }, 0);
-      };
-      
-      // Add balances to accounts
-      const assetsWithBalances = assets.map(account => ({
-        ...account,
-        balance: calculateAccountBalance(account.code)
-      }));
-      
-      const liabilitiesWithBalances = liabilities.map(account => ({
-        ...account,
-        balance: calculateAccountBalance(account.code)
-      }));
-      
-      const equityWithBalances = equity.map(account => ({
-        ...account,
-        balance: calculateAccountBalance(account.code)
-      }));
-      
-      // Group assets by category
-      const groupedAssets = assetsWithBalances.reduce((acc, asset) => {
-        const category = asset.category || 'Other Assets';
-        if (!acc[category]) {
-          acc[category] = [];
-        }
-        acc[category].push(asset);
-        return acc;
-      }, {});
-      
-      // Group liabilities by category
-      const groupedLiabilities = liabilitiesWithBalances.reduce((acc, liability) => {
-        const category = liability.category || 'Other Liabilities';
-        if (!acc[category]) {
-          acc[category] = [];
-        }
-        acc[category].push(liability);
-        return acc;
-      }, {});
-      
-      // Update state with processed data
-      setBalanceSheet({
-        assets: groupedAssets,
-        liabilities: groupedLiabilities,
-        equity: equityWithBalances,
-        date: selectedDate
-      });
-      
-      setError(null);
+      if (response.data.success) {
+        setBalanceSheet(response.data.data);
+        setError(null);
+      } else {
+        setError(response.data.message || 'Failed to load balance sheet data');
+      }
     } catch (error) {
       console.error('Error fetching balance sheet data:', error);
       
@@ -201,34 +122,39 @@ const BalanceSheetPage = () => {
 
   // Calculate totals
   const calculateTotals = () => {
-    let totalAssets = 0;
-    let totalLiabilities = 0;
-    let totalEquity = 0;
+    if (!balanceSheet || !balanceSheet.summary) {
+      return {
+        totalAssets: 0,
+        totalLiabilities: 0,
+        totalEquity: 0,
+        netIncome: 0,
+        totalEquityWithIncome: 0,
+        totalLiabilitiesAndEquity: 0,
+        isBalanced: true
+      };
+    }
     
-    // Calculate total assets
-    Object.values(balanceSheet.assets).forEach(category => {
-      category.forEach(asset => {
-        totalAssets += asset.balance;
-      });
-    });
-    
-    // Calculate total liabilities
-    Object.values(balanceSheet.liabilities).forEach(category => {
-      category.forEach(liability => {
-        totalLiabilities += liability.balance;
-      });
-    });
-    
-    // Calculate total equity
-    balanceSheet.equity.forEach(equity => {
-      totalEquity += equity.balance;
-    });
+    // Use summary data from the API
+    const { 
+      totalAssets, 
+      totalLiabilities, 
+      totalEquity, 
+      netIncome, 
+      totalEquityWithIncome,
+      totalLiabilitiesAndEquity, 
+      isBalanced,
+      totalNegativeWIP
+    } = balanceSheet.summary;
     
     return {
       totalAssets,
       totalLiabilities,
       totalEquity,
-      totalLiabilitiesAndEquity: totalLiabilities + totalEquity
+      netIncome: netIncome || 0,
+      totalNegativeWIP: totalNegativeWIP || 0,
+      totalEquityWithIncome: totalEquityWithIncome || (totalEquity + (netIncome || 0)),
+      totalLiabilitiesAndEquity: totalLiabilitiesAndEquity || (totalLiabilities + totalEquity + (netIncome || 0)),
+      isBalanced
     };
   };
   
@@ -246,10 +172,10 @@ const BalanceSheetPage = () => {
       assets.map(asset => ({
         Section: 'Assets',
         Category: category,
-        AccountCode: asset.code,
+        AccountCode: asset.code || '',
         AccountName: asset.name,
-        Balance: asset.balance,
-        'Balance (Formatted)': formatCurrency(asset.balance)
+        Balance: asset.balance || asset.bookValue || asset.wipValue || 0,
+        'Balance (Formatted)': formatCurrency(asset.balance || asset.bookValue || asset.wipValue || 0)
       }))
     );
     
@@ -258,7 +184,7 @@ const BalanceSheetPage = () => {
       liabilities.map(liability => ({
         Section: 'Liabilities',
         Category: category,
-        AccountCode: liability.code,
+        AccountCode: liability.code || '',
         AccountName: liability.name,
         Balance: liability.balance,
         'Balance (Formatted)': formatCurrency(liability.balance)
@@ -305,6 +231,22 @@ const BalanceSheetPage = () => {
         Section: 'Summary',
         Category: 'Total',
         AccountCode: '',
+        AccountName: 'Net Income',
+        Balance: totals.netIncome,
+        'Balance (Formatted)': formatCurrency(totals.netIncome)
+      },
+      {
+        Section: 'Summary',
+        Category: 'Total',
+        AccountCode: '',
+        AccountName: 'Total Equity with Income',
+        Balance: totals.totalEquityWithIncome,
+        'Balance (Formatted)': formatCurrency(totals.totalEquityWithIncome)
+      },
+      {
+        Section: 'Summary',
+        Category: 'Total',
+        AccountCode: '',
         AccountName: 'Total Liabilities and Equity',
         Balance: totals.totalLiabilitiesAndEquity,
         'Balance (Formatted)': formatCurrency(totals.totalLiabilitiesAndEquity)
@@ -322,6 +264,99 @@ const BalanceSheetPage = () => {
   // Go back to reports page
   const goBack = () => {
     router.push('/reports');
+  };
+
+  // Render asset categories and accounts
+  const renderAssets = () => {
+    if (!balanceSheet.assets) return null;
+    
+    return Object.entries(balanceSheet.assets).map(([category, assets]) => (
+      <Box key={category} mb={4}>
+        <Heading as="h3" size="sm" mb={2} color="gray.600">
+          {category}
+        </Heading>
+        <Table size="sm" variant="simple">
+          <Thead>
+            <Tr>
+              <Th>Account</Th>
+              <Th isNumeric>Balance</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {Array.isArray(assets) ? (
+              assets.map(asset => (
+                <Tr key={asset.code || asset.id}>
+                  <Td>{asset.name}</Td>
+                  <Td isNumeric>{formatCurrency(asset.balance || asset.bookValue || asset.wipValue || 0)}</Td>
+                </Tr>
+              ))
+            ) : (
+              <Tr>
+                <Td colSpan={2}>No data available</Td>
+              </Tr>
+            )}
+          </Tbody>
+        </Table>
+      </Box>
+    ));
+  };
+
+  // Render liability categories and accounts
+  const renderLiabilities = () => {
+    if (!balanceSheet.liabilities) return null;
+    
+    return Object.entries(balanceSheet.liabilities).map(([category, liabilities]) => (
+      <Box key={category} mb={4}>
+        <Heading as="h3" size="sm" mb={2} color="gray.600">
+          {category}
+        </Heading>
+        <Table size="sm" variant="simple">
+          <Thead>
+            <Tr>
+              <Th>Account</Th>
+              <Th isNumeric>Balance</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {liabilities.map(liability => (
+              <Tr key={liability.code}>
+                <Td>{liability.name}</Td>
+                <Td isNumeric>{formatCurrency(liability.balance)}</Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </Box>
+    ));
+  };
+
+  // Render equity accounts
+  const renderEquity = () => {
+    if (!balanceSheet.equity || balanceSheet.equity.length === 0) return null;
+    
+    return (
+      <Box mb={4}>
+        <Heading as="h3" size="sm" mb={2} color="gray.600">
+          Equity
+        </Heading>
+        <Table size="sm" variant="simple">
+          <Thead>
+            <Tr>
+              <Th>Account</Th>
+              <Th isNumeric>Balance</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {balanceSheet.equity.map(equity => (
+              <Tr key={equity.code}>
+                <Td>{equity.name}</Td>
+                <Td isNumeric>{formatCurrency(equity.balance)}</Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </Box>
+    );
   };
 
   return (
@@ -388,16 +423,43 @@ const BalanceSheetPage = () => {
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Assets</StatLabel>
           <StatNumber>{formatCurrency(totals.totalAssets)}</StatNumber>
+          <StatHelpText>Including Fixed Assets & WIP</StatHelpText>
         </Stat>
         
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Liabilities</StatLabel>
           <StatNumber>{formatCurrency(totals.totalLiabilities)}</StatNumber>
+          {totals.totalNegativeWIP > 0 && (
+            <StatHelpText>Includes {formatCurrency(totals.totalNegativeWIP)} advance payments</StatHelpText>
+          )}
         </Stat>
         
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Equity</StatLabel>
           <StatNumber>{formatCurrency(totals.totalEquity)}</StatNumber>
+          <StatHelpText>Excluding Net Income</StatHelpText>
+        </Stat>
+      </SimpleGrid>
+      
+      {/* Net Income and Total Equity with Income Cards */}
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={6}>
+        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+          <StatLabel>Net Income</StatLabel>
+          <StatNumber>{formatCurrency(totals.netIncome)}</StatNumber>
+          <StatHelpText>
+            {totals.netIncome >= 0 ? (
+              <StatArrow type="increase" />
+            ) : (
+              <StatArrow type="decrease" />
+            )}
+            {totals.netIncome >= 0 ? 'Profit' : 'Loss'}
+          </StatHelpText>
+        </Stat>
+        
+        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+          <StatLabel>Total Equity with Income</StatLabel>
+          <StatNumber>{formatCurrency(totals.totalEquityWithIncome)}</StatNumber>
+          <StatHelpText>Equity + Net Income</StatHelpText>
         </Stat>
       </SimpleGrid>
 
@@ -419,43 +481,7 @@ const BalanceSheetPage = () => {
             <TabPanel>
               <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
                 <Heading size="md" mb={4}>Assets</Heading>
-                <Accordion allowMultiple defaultIndex={[0]}>
-                  {Object.entries(balanceSheet.assets).map(([category, assets]) => (
-                    <AccordionItem key={category}>
-                      <h2>
-                        <AccordionButton>
-                          <Box flex="1" textAlign="left" fontWeight="medium">
-                            {category}
-                          </Box>
-                          <Text mr={4}>
-                            {formatCurrency(assets.reduce((sum, asset) => sum + asset.balance, 0))}
-                          </Text>
-                          <AccordionIcon />
-                        </AccordionButton>
-                      </h2>
-                      <AccordionPanel pb={4}>
-                        <Table variant="simple" size="sm">
-                          <Thead>
-                            <Tr>
-                              <Th>Account Code</Th>
-                              <Th>Account Name</Th>
-                              <Th isNumeric>Balance</Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {assets.map((asset) => (
-                              <Tr key={asset.code}>
-                                <Td>{asset.code}</Td>
-                                <Td>{asset.name}</Td>
-                                <Td isNumeric>{formatCurrency(asset.balance)}</Td>
-                              </Tr>
-                            ))}
-                          </Tbody>
-                        </Table>
-                      </AccordionPanel>
-                    </AccordionItem>
-                  ))}
-                </Accordion>
+                {renderAssets()}
                 <Flex justify="space-between" mt={4} p={2} bg="gray.50" _dark={{ bg: "gray.600" }} borderRadius="md">
                   <Text fontWeight="bold">Total Assets</Text>
                   <Text fontWeight="bold">{formatCurrency(totals.totalAssets)}</Text>
@@ -467,43 +493,7 @@ const BalanceSheetPage = () => {
             <TabPanel>
               <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
                 <Heading size="md" mb={4}>Liabilities</Heading>
-                <Accordion allowMultiple defaultIndex={[0]}>
-                  {Object.entries(balanceSheet.liabilities).map(([category, liabilities]) => (
-                    <AccordionItem key={category}>
-                      <h2>
-                        <AccordionButton>
-                          <Box flex="1" textAlign="left" fontWeight="medium">
-                            {category}
-                          </Box>
-                          <Text mr={4}>
-                            {formatCurrency(liabilities.reduce((sum, liability) => sum + liability.balance, 0))}
-                          </Text>
-                          <AccordionIcon />
-                        </AccordionButton>
-                      </h2>
-                      <AccordionPanel pb={4}>
-                        <Table variant="simple" size="sm">
-                          <Thead>
-                            <Tr>
-                              <Th>Account Code</Th>
-                              <Th>Account Name</Th>
-                              <Th isNumeric>Balance</Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {liabilities.map((liability) => (
-                              <Tr key={liability.code}>
-                                <Td>{liability.code}</Td>
-                                <Td>{liability.name}</Td>
-                                <Td isNumeric>{formatCurrency(liability.balance)}</Td>
-                              </Tr>
-                            ))}
-                          </Tbody>
-                        </Table>
-                      </AccordionPanel>
-                    </AccordionItem>
-                  ))}
-                </Accordion>
+                {renderLiabilities()}
                 <Flex justify="space-between" mt={4} p={2} bg="gray.50" _dark={{ bg: "gray.600" }} borderRadius="md">
                   <Text fontWeight="bold">Total Liabilities</Text>
                   <Text fontWeight="bold">{formatCurrency(totals.totalLiabilities)}</Text>
@@ -515,24 +505,7 @@ const BalanceSheetPage = () => {
             <TabPanel>
               <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
                 <Heading size="md" mb={4}>Equity</Heading>
-                <Table variant="simple">
-                  <Thead>
-                    <Tr>
-                      <Th>Account Code</Th>
-                      <Th>Account Name</Th>
-                      <Th isNumeric>Balance</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {balanceSheet.equity.map((equity) => (
-                      <Tr key={equity.code}>
-                        <Td>{equity.code}</Td>
-                        <Td>{equity.name}</Td>
-                        <Td isNumeric>{formatCurrency(equity.balance)}</Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
+                {renderEquity()}
                 <Flex justify="space-between" mt={4} p={2} bg="gray.50" _dark={{ bg: "gray.600" }} borderRadius="md">
                   <Text fontWeight="bold">Total Equity</Text>
                   <Text fontWeight="bold">{formatCurrency(totals.totalEquity)}</Text>
@@ -560,9 +533,23 @@ const BalanceSheetPage = () => {
                       <Td fontWeight="bold">Total Liabilities</Td>
                       <Td isNumeric>{formatCurrency(totals.totalLiabilities)}</Td>
                     </Tr>
+                    {totals.totalNegativeWIP > 0 && (
+                      <Tr>
+                        <Td pl={8}>Advance from Customers (Negative WIP)</Td>
+                        <Td isNumeric>{formatCurrency(totals.totalNegativeWIP)}</Td>
+                      </Tr>
+                    )}
                     <Tr>
                       <Td fontWeight="bold">Total Equity</Td>
                       <Td isNumeric>{formatCurrency(totals.totalEquity)}</Td>
+                    </Tr>
+                    <Tr>
+                      <Td fontWeight="bold">Net Income</Td>
+                      <Td isNumeric>{formatCurrency(totals.netIncome)}</Td>
+                    </Tr>
+                    <Tr>
+                      <Td fontWeight="bold">Total Equity with Income</Td>
+                      <Td isNumeric>{formatCurrency(totals.totalEquityWithIncome)}</Td>
                     </Tr>
                   </Tbody>
                 </Table>
@@ -571,11 +558,18 @@ const BalanceSheetPage = () => {
                   <Text fontWeight="bold">Total Liabilities and Equity</Text>
                   <Text fontWeight="bold">{formatCurrency(totals.totalLiabilitiesAndEquity)}</Text>
                 </Flex>
-                {Math.abs(totals.totalAssets - totals.totalLiabilitiesAndEquity) > 0.01 && (
+                {Math.abs(totals.totalAssets - totals.totalLiabilitiesAndEquity) > 0.01 ? (
                   <Alert status="warning" mt={4} borderRadius="md">
                     <AlertIcon />
                     <Text>
                       Balance sheet is not balanced. Difference: {formatCurrency(totals.totalAssets - totals.totalLiabilitiesAndEquity)}
+                    </Text>
+                  </Alert>
+                ) : (
+                  <Alert status="success" mt={4} borderRadius="md">
+                    <AlertIcon />
+                    <Text>
+                      Balance sheet is balanced.
                     </Text>
                   </Alert>
                 )}
