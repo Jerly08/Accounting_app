@@ -37,7 +37,7 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     // Get assets with pagination
-    const assets = await prisma.fixedAsset.findMany({
+    const assets = await prisma.fixedasset.findMany({
       where,
       skip,
       take: pageSize,
@@ -47,10 +47,10 @@ router.get('/', authenticate, async (req, res) => {
     });
 
     // Get total count for pagination
-    const total = await prisma.fixedAsset.count({ where });
+    const total = await prisma.fixedasset.count({ where });
 
     // Get total value and depreciation
-    const totalValues = await prisma.fixedAsset.aggregate({
+    const totalValues = await prisma.fixedasset.aggregate({
       _sum: {
         value: true,
         accumulatedDepreciation: true,
@@ -90,7 +90,7 @@ router.get('/', authenticate, async (req, res) => {
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
-    const asset = await prisma.fixedAsset.findUnique({
+    const asset = await prisma.fixedasset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -186,7 +186,7 @@ router.post('/', authenticate, async (req, res) => {
     const bookValue = assetValue - accumulatedDepreciation;
 
     // Create fixed asset
-    const asset = await prisma.fixedAsset.create({
+    const asset = await prisma.fixedasset.create({
       data: {
         assetName,
         category: category || "equipment", // Default to equipment if not provided
@@ -194,7 +194,8 @@ router.post('/', authenticate, async (req, res) => {
         value: assetValue,
         usefulLife: assetUsefulLife,
         accumulatedDepreciation,
-        bookValue
+        bookValue,
+        updatedAt: new Date()
       }
     });
 
@@ -223,7 +224,7 @@ router.put('/:id', authenticate, async (req, res) => {
     const { assetName, category, acquisitionDate, value, usefulLife } = req.body;
 
     // Check if asset exists
-    const existingAsset = await prisma.fixedAsset.findUnique({
+    const existingAsset = await prisma.fixedasset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -258,6 +259,9 @@ router.put('/:id', authenticate, async (req, res) => {
     if (acquisitionDate) {
       updateData.acquisitionDate = new Date(acquisitionDate);
     }
+    
+    // Always add updatedAt field
+    updateData.updatedAt = new Date();
 
     // Convert to appropriate types if provided
     let assetValue = undefined;
@@ -299,7 +303,7 @@ router.put('/:id', authenticate, async (req, res) => {
     }
 
     // Update fixed asset
-    const updatedAsset = await prisma.fixedAsset.update({
+    const updatedAsset = await prisma.fixedasset.update({
       where: { id: parseInt(id) },
       data: updateData
     });
@@ -332,7 +336,7 @@ router.post('/:id/depreciate', authenticate, async (req, res) => {
     const depreciationDate = date ? new Date(date) : new Date();
 
     // Check if asset exists
-    const asset = await prisma.fixedAsset.findUnique({
+    const asset = await prisma.fixedasset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -351,11 +355,12 @@ router.post('/:id/depreciate', authenticate, async (req, res) => {
     const newBookValue = asset.value - newAccumulatedDepreciation;
 
     // Update asset with new depreciation values
-    const updatedAsset = await prisma.fixedAsset.update({
+    const updatedAsset = await prisma.fixedasset.update({
       where: { id: parseInt(id) },
       data: {
         accumulatedDepreciation: newAccumulatedDepreciation,
-        bookValue: newBookValue
+        bookValue: newBookValue,
+        updatedAt: new Date()
       }
     });
 
@@ -390,7 +395,7 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
     const { id } = req.params;
 
     // Check if asset exists
-    const existingAsset = await prisma.fixedAsset.findUnique({
+    const existingAsset = await prisma.fixedasset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -402,7 +407,7 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
     }
 
     // Delete asset
-    await prisma.fixedAsset.delete({
+    await prisma.fixedasset.delete({
       where: { id: parseInt(id) }
     });
 

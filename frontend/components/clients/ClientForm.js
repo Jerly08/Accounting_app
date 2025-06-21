@@ -36,7 +36,7 @@ const getApiUrl = (endpoint) => {
   return `/${cleanEndpoint}`;
 };
 
-const ClientForm = ({ isOpen, onClose, client, onSubmitSuccess }) => {
+const ClientForm = ({ isOpen, onClose, client, onSubmit }) => {
   const initialFormData = {
     name: '',
     phone: '',
@@ -153,7 +153,7 @@ const ClientForm = ({ isOpen, onClose, client, onSubmitSuccess }) => {
       if (client) {
         // Update existing client
         console.log('Updating client with ID:', client.id);
-        const apiUrl = `/api/clients/${client.id}`;
+        const apiUrl = getApiUrl(`api/clients/${client.id}`);
         console.log('PUT request to:', apiUrl);
         
         await axios.put(apiUrl, formData, config);
@@ -168,7 +168,7 @@ const ClientForm = ({ isOpen, onClose, client, onSubmitSuccess }) => {
       } else {
         // Create new client
         console.log('Creating new client');
-        const apiUrl = '/api/clients';
+        const apiUrl = getApiUrl('api/clients');
         console.log('POST request to:', apiUrl);
         
         await axios.post(apiUrl, formData, config);
@@ -182,8 +182,8 @@ const ClientForm = ({ isOpen, onClose, client, onSubmitSuccess }) => {
         });
       }
       
-      if (onSubmitSuccess) {
-        onSubmitSuccess();
+      if (onSubmit) {
+        onSubmit();
       }
       
       onClose(); // Close modal on success

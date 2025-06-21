@@ -129,26 +129,110 @@ const DashboardPage = () => {
 
     try {
       setLoading(true);
+      console.log('Fetching dashboard data from API...');
       
       // Fetch dashboard summary data
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard`,
+        `/api/dashboard`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
           },
+          timeout: 10000, // 10 seconds timeout
         }
       );
       
-      setDashboardData(response.data.data || {});
+      console.log('Dashboard API response received:', response.status);
+      
+      // Ensure we have default values if data is missing
+      const defaultDashboardData = {
+        projects: {
+          total: 0,
+          active: 0,
+          completed: 0,
+          cancelled: 0,
+          recentProjects: [],
+        },
+        financial: {
+          totalIncome: 0,
+          totalExpense: 0,
+          netIncome: 0,
+          recentTransactions: [],
+        },
+        billings: {
+          totalBilled: 0,
+          totalPaid: 0,
+          totalUnpaid: 0,
+          recentBillings: [],
+        },
+        assets: {
+          totalAssets: 0,
+          totalValue: 0,
+          totalDepreciation: 0,
+          bookValue: 0,
+        },
+        wip: {
+          totalWipValue: 0,
+          wipProjects: 0,
+        },
+        clients: {
+          totalClients: 0,
+        },
+      };
+      
+      // Merge the response data with default values
+      const mergedData = {
+        ...defaultDashboardData,
+        ...(response.data && response.data.data ? response.data.data : {}),
+      };
+      
+      // Ensure nested objects have default values
+      mergedData.projects = { ...defaultDashboardData.projects, ...(mergedData.projects || {}) };
+      mergedData.financial = { ...defaultDashboardData.financial, ...(mergedData.financial || {}) };
+      mergedData.billings = { ...defaultDashboardData.billings, ...(mergedData.billings || {}) };
+      mergedData.assets = { ...defaultDashboardData.assets, ...(mergedData.assets || {}) };
+      mergedData.wip = { ...defaultDashboardData.wip, ...(mergedData.wip || {}) };
+      mergedData.clients = { ...defaultDashboardData.clients, ...(mergedData.clients || {}) };
+      
+      // Ensure arrays are always arrays
+      if (!Array.isArray(mergedData.projects.recentProjects)) {
+        mergedData.projects.recentProjects = [];
+      }
+      if (!Array.isArray(mergedData.financial.recentTransactions)) {
+        mergedData.financial.recentTransactions = [];
+      }
+      if (!Array.isArray(mergedData.billings.recentBillings)) {
+        mergedData.billings.recentBillings = [];
+      }
+      
+      setDashboardData(mergedData);
       setError(null);
+      
+      console.log('Dashboard data loaded successfully');
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       
-      if (error.response?.status === 401) {
+      // Set default empty dashboard data on error
+      setDashboardData({
+        projects: { total: 0, active: 0, completed: 0, cancelled: 0, recentProjects: [] },
+        financial: { totalIncome: 0, totalExpense: 0, netIncome: 0, recentTransactions: [] },
+        billings: { totalBilled: 0, totalPaid: 0, totalUnpaid: 0, recentBillings: [] },
+        assets: { totalAssets: 0, totalValue: 0, totalDepreciation: 0, bookValue: 0 },
+        wip: { totalWipValue: 0, wipProjects: 0 },
+        clients: { totalClients: 0 },
+      });
+      
+      // Detailed error handling
+      if (error.code === 'ECONNABORTED') {
+        setError('Connection timeout. Server is taking too long to respond.');
+      } else if (!error.response) {
+        setError('Network error. Please check your connection and try again.');
+      } else if (error.response.status === 401) {
         setError('Your session has expired. Please login again.');
+      } else if (error.response.status === 500) {
+        setError('Server error. The team has been notified.');
       } else {
-        setError('Failed to load dashboard data. Please try again later.');
+        setError(`Failed to load dashboard data: ${error.message}`);
       }
     } finally {
       setLoading(false);

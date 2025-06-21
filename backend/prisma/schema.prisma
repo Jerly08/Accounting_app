@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,152 +7,168 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User model for authentication
-model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  email     String   @unique
-  password  String
-  name      String
-  role      String   @default("user")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model billing {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  billingDate DateTime
+  percentage  Decimal  @db.Decimal(5, 2)
+  amount      Decimal  @db.Decimal(15, 2)
+  status      String   @default("unpaid")
+  invoice     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  project     project  @relation(fields: [projectId], references: [id], map: "Billing_projectId_fkey")
+
+  @@index([projectId], map: "Billing_projectId_fkey")
 }
 
-// Client model
-model Client {
+model chartofaccount {
+  id                Int               @id @default(autoincrement())
+  code              String            @unique(map: "ChartOfAccount_code_key")
+  name              String
+  type              String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime
+  category          String?
+  cashflow_category cashflow_category @relation(fields: [code], references: [accountCode])
+  transaction       transaction[]
+}
+
+model client {
   id        Int       @id @default(autoincrement())
   name      String
   phone     String?
   email     String?
   address   String?
-  projects  Project[]
   createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  updatedAt DateTime
+  project   project[]
 }
 
-// Chart of Accounts model
-model ChartOfAccount {
-  id           Int           @id @default(autoincrement())
-  code         String        @unique
-  name         String
-  type         String // Pendapatan, Beban, Aktiva, Aset Tetap, Kontra Aset
-  transactions Transaction[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+model fixedasset {
+  id                      Int      @id @default(autoincrement())
+  assetName               String
+  acquisitionDate         DateTime
+  value                   Decimal  @db.Decimal(15, 2)
+  usefulLife              Int
+  accumulatedDepreciation Decimal  @default(0.00) @db.Decimal(15, 2)
+  bookValue               Decimal  @db.Decimal(15, 2)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime
+  category                String   @default("equipment")
 }
 
-// Project model
-model Project {
-  id           Int           @id @default(autoincrement())
-  projectCode  String        @unique
-  name         String
-  clientId     Int
-  client       Client        @relation(fields: [clientId], references: [id])
-  startDate    DateTime
-  endDate      DateTime?
-  totalValue   Decimal       @db.Decimal(15, 2)
-  status       String        @default("ongoing") // ongoing, completed, cancelled
-  projectCosts ProjectCost[]
-  billings     Billing[]
-  transactions Transaction[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+model project {
+  id          Int           @id @default(autoincrement())
+  projectCode String        @unique(map: "Project_projectCode_key")
+  name        String
+  clientId    Int
+  startDate   DateTime
+  endDate     DateTime?
+  totalValue  Decimal       @db.Decimal(15, 2)
+  status      String        @default("ongoing")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime
+  description String?
+  progress    Decimal?      @default(0.00) @db.Decimal(5, 2)
+  billing     billing[]
+  client      client        @relation(fields: [clientId], references: [id], map: "Project_clientId_fkey")
+  projectcost projectcost[]
+  transaction transaction[]
+
+  @@index([clientId], map: "Project_clientId_fkey")
 }
 
-// Project Cost model
-model ProjectCost {
+model projectcost {
   id          Int      @id @default(autoincrement())
   projectId   Int
-  project     Project  @relation(fields: [projectId], references: [id])
-  category    String // material, labor, equipment, other
+  category    String
   description String
   amount      Decimal  @db.Decimal(15, 2)
   date        DateTime
-  status      String   @default("pending") // pending, approved, rejected
-  receipt     String? // path to uploaded receipt
+  status      String   @default("pending")
+  receipt     String?
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime
+  project     project  @relation(fields: [projectId], references: [id], map: "ProjectCost_projectId_fkey")
+
+  @@index([projectId], map: "ProjectCost_projectId_fkey")
 }
 
-// Billing model
-model Billing {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  project     Project  @relation(fields: [projectId], references: [id])
-  billingDate DateTime
-  percentage  Decimal  @db.Decimal(5, 2) // e.g. 25% of total project value
-  amount      Decimal  @db.Decimal(15, 2)
-  status      String   @default("unpaid") // unpaid, partially_paid, paid
-  invoice     String? // path to generated invoice
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-// Fixed Assets model
-model FixedAsset {
+model setting {
   id                    Int      @id @default(autoincrement())
-  assetName             String
-  category              String   @default("equipment") // equipment, vehicle, building, land, furniture, other
-  acquisitionDate       DateTime
-  value                 Decimal  @db.Decimal(15, 2)
-  usefulLife            Int // in years
-  accumulatedDepreciation Decimal  @db.Decimal(15, 2) @default(0)
-  bookValue             Decimal  @db.Decimal(15, 2)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  companyName           String
+  companyAddress        String?
+  companyPhone          String?
+  companyEmail          String?
+  taxNumber             String?
+  currency              String   @default("IDR")
+  currencySymbol        String   @default("Rp")
+  invoicePrefix         String   @default("INV")
+  projectPrefix         String   @default("PRJ")
+  fiscalYearStart       String   @default("01-01")
+  vatRate               Decimal  @default(11.00) @db.Decimal(5, 2)
+  defaultPaymentTerms   Int      @default(30)
+  reminderDays          Int      @default(7)
+  boringDefaultRate     Decimal  @default(3500000.00) @db.Decimal(15, 2)
+  sondirDefaultRate     Decimal  @default(2000000.00) @db.Decimal(15, 2)
+  enableUserRoles       Boolean  @default(true)
+  allowClientPortal     Boolean  @default(false)
+  enableTwoFactor       Boolean  @default(false)
+  enableAutomaticBackup Boolean  @default(true)
+  backupFrequency       String   @default("daily")
+  lastUpdated           DateTime @default(now())
+  updatedBy             Int?
 }
 
-// Transactions model
-model Transaction {
-  id          Int            @id @default(autoincrement())
-  date        DateTime
-  type        String // income, expense, transfer
-  accountCode String
-  account     ChartOfAccount @relation(fields: [accountCode], references: [code])
-  description String
-  amount      Decimal        @db.Decimal(15, 2)
-  projectId   Int?
-  project     Project?       @relation(fields: [projectId], references: [id])
-  notes       String?        // Optional notes field for additional transaction details
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+model transaction {
+  id             Int            @id @default(autoincrement())
+  date           DateTime
+  type           String
+  accountCode    String
+  description    String
+  amount         Decimal        @db.Decimal(15, 2)
+  projectId      Int?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime
+  notes          String?
+  chartofaccount chartofaccount @relation(fields: [accountCode], references: [code], map: "Transaction_accountCode_fkey")
+  project        project?       @relation(fields: [projectId], references: [id], map: "Transaction_projectId_fkey")
+
+  @@index([accountCode], map: "Transaction_accountCode_fkey")
+  @@index([projectId], map: "Transaction_projectId_fkey")
 }
 
-// Settings model for application-wide configuration
-model Setting {
-  id              Int      @id @default(autoincrement())
-  // Company Profile
-  companyName     String
-  companyAddress  String?
-  companyPhone    String?
-  companyEmail    String?
-  taxNumber       String?
-  
-  // Financial Settings
-  currency        String   @default("IDR")
-  currencySymbol  String   @default("Rp")
-  invoicePrefix   String   @default("INV")
-  projectPrefix   String   @default("PRJ")
-  fiscalYearStart String   @default("01-01") // format DD-MM
-  vatRate         Decimal  @db.Decimal(5, 2) @default(11)
-  
-  // Project Settings
-  defaultPaymentTerms Int      @default(30) // days
-  reminderDays        Int      @default(7)  // days
-  boringDefaultRate   Decimal  @db.Decimal(15, 2) @default(3500000)
-  sondirDefaultRate   Decimal  @db.Decimal(15, 2) @default(2000000)
-  
-  // User Management
-  enableUserRoles     Boolean  @default(true)
-  allowClientPortal   Boolean  @default(false)
-  
-  // Security Settings
-  enableTwoFactor     Boolean  @default(false)
-  enableAutomaticBackup Boolean @default(true)
-  backupFrequency     String   @default("daily") // daily, weekly, monthly
-  
-  // System
-  lastUpdated        DateTime @default(now())
-  updatedBy          Int?     // User ID who last updated settings
-} 
+model user {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique(map: "User_username_key")
+  email     String   @unique(map: "User_email_key")
+  password  String
+  name      String
+  role      String   @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+}
+
+model cashflow_category {
+  id             Int             @id @default(autoincrement())
+  accountCode    String          @unique
+  category       String
+  subcategory    String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  chartofaccount chartofaccount?
+}
+
+model cashflow_report {
+  id                Int       @id @default(autoincrement())
+  startDate         DateTime
+  endDate           DateTime
+  reportData        Json
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         Int?
+  isComparative     Boolean   @default(false)
+  previousStartDate DateTime?
+  previousEndDate   DateTime?
+}

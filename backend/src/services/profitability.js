@@ -7,44 +7,71 @@ const prisma = new PrismaClient();
 
 /**
  * Menghitung metrik profitabilitas untuk satu proyek
- * @param {Object} project - Objek proyek dengan costs dan billings
+ * @param {Object} project - Objek proyek dengan costs, billings, dan transactions
  * @returns {Object} - Metrik profitabilitas
  */
 const calculateProjectProfitability = (project) => {
-  // Hitung total biaya
-  const totalCosts = project.projectCosts 
-    ? project.projectCosts.reduce((sum, cost) => sum + parseFloat(cost.amount || 0), 0) 
+  // Hitung total biaya dari projectcosts
+  const totalCosts = project.projectcost 
+    ? project.projectcost.reduce((sum, cost) => sum + parseFloat(cost.amount || 0), 0) 
     : 0;
   
   // Hitung total penagihan
-  const totalBilled = project.billings 
-    ? project.billings.reduce((sum, billing) => sum + parseFloat(billing.amount || 0), 0) 
+  const totalBilled = project.billing
+    ? project.billing.reduce((sum, billing) => sum + parseFloat(billing.amount || 0), 0) 
     : 0;
+    
+  // Hitung total transaksi biaya tambahan (jika ada)
+  // Filter transaksi yang relevan dengan biaya proyek (misalnya tipe = 'EXPENSE')
+  const additionalCosts = project.transaction
+    ? project.transaction
+        .filter(transaction => ['EXPENSE', 'WIP_INCREASE'].includes(transaction.type))
+        .reduce((sum, transaction) => sum + parseFloat(transaction.amount || 0), 0)
+    : 0;
+    
+  // Hitung total penerimaan dari transaksi (jika ada)
+  const additionalRevenue = project.transaction
+    ? project.transaction
+        .filter(transaction => ['REVENUE', 'WIP_DECREASE'].includes(transaction.type))
+        .reduce((sum, transaction) => sum + parseFloat(transaction.amount || 0), 0)
+    : 0;
+  
+  // Total biaya aktual termasuk transaksi tambahan
+  const actualCosts = totalCosts + additionalCosts;
+  
+  // Total penerimaan aktual termasuk transaksi tambahan
+  const actualBilled = totalBilled + additionalRevenue;
   
   // Nilai total proyek
   const totalValue = parseFloat(project.totalValue || 0);
   
-  // Hitung laba kotor
-  const grossProfit = totalBilled - totalCosts;
+  // Hitung laba kotor (revenue - costs)
+  const grossProfit = actualBilled - actualCosts;
   
-  // Hitung margin laba
-  const profitMargin = totalBilled > 0 ? (grossProfit / totalBilled) * 100 : 0;
+  // Hitung margin laba (terhadap nilai proyek)
+  const profitMargin = totalValue > 0 ? (grossProfit / totalValue) * 100 : 0;
   
   // Hitung rasio biaya terhadap nilai proyek
-  const costRatio = totalValue > 0 ? (totalCosts / totalValue) * 100 : 0;
+  const costRatio = totalValue > 0 ? (actualCosts / totalValue) * 100 : 0;
   
-  // Hitung persentase penyelesaian
-  const completion = totalValue > 0 ? (totalBilled / totalValue) * 100 : 0;
+  // Hitung persentase penyelesaian (gunakan field progress jika ada, atau hitung dari penagihan)
+  const completion = project.progress 
+    ? parseFloat(project.progress || 0) 
+    : (totalValue > 0 ? (actualBilled / totalValue) * 100 : 0);
   
-  // Hitung nilai WIP (Work In Progress)
-  const wipValue = totalCosts - totalBilled;
+  // Hitung nilai WIP (Work In Progress) = biaya - penagihan
+  const wipValue = actualCosts - actualBilled;
   
-  // Hitung ROI (Return on Investment)
-  const roi = totalCosts > 0 ? (grossProfit / totalCosts) * 100 : 0;
+  // Hitung ROI (Return on Investment) = profit / biaya
+  const roi = actualCosts > 0 ? (grossProfit / actualCosts) * 100 : 0;
   
   return {
-    totalCosts,
-    totalBilled,
+    totalCosts: actualCosts,
+    totalBilled: actualBilled,
+    directCosts: totalCosts,
+    indirectCosts: additionalCosts,
+    directBillings: totalBilled,
+    indirectRevenue: additionalRevenue,
     grossProfit,
     profitMargin: parseFloat(profitMargin.toFixed(2)),
     costRatio: parseFloat(costRatio.toFixed(2)),
@@ -62,12 +89,13 @@ const calculateProjectProfitability = (project) => {
  */
 const getAllProjectsProfitability = async () => {
   try {
-    // Ambil semua proyek dengan costs dan billings
+    // Ambil semua proyek dengan costs, billings, dan transactions
     const projects = await prisma.project.findMany({
       include: {
         client: true,
-        projectCosts: true,
-        billings: true
+        projectcost: true,
+        billing: true,
+        transaction: true
       }
     });
     
@@ -102,19 +130,24 @@ const getAllProjectsProfitability = async () => {
  */
 const getProjectProfitability = async (projectId) => {
   try {
-    // Ambil proyek berdasarkan ID dengan costs dan billings
+    // Ambil proyek berdasarkan ID dengan costs, billings, dan transactions
     const project = await prisma.project.findUnique({
       where: { id: parseInt(projectId) },
       include: {
         client: true,
-        projectCosts: {
+        projectcost: {
           orderBy: {
             date: 'desc'
           }
         },
-        billings: {
+        billing: {
           orderBy: {
             billingDate: 'desc'
+          }
+        },
+        transaction: {
+          orderBy: {
+            date: 'desc'
           }
         }
       }
@@ -132,7 +165,7 @@ const getProjectProfitability = async (projectId) => {
     
     // Group costs by category
     const costsByCategory = {};
-    project.projectCosts.forEach(cost => {
+    project.projectcost.forEach(cost => {
       const category = cost.category || 'Other';
       if (!costsByCategory[category]) {
         costsByCategory[category] = 0;
@@ -170,7 +203,7 @@ const getProfitabilitySummary = async () => {
     // Ambil semua proyek dengan costs dan billings
     const projects = await prisma.project.findMany({
       include: {
-        projectCosts: true,
+        projectcosts: true,
         billings: true
       }
     });

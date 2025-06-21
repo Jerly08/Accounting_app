@@ -315,7 +315,8 @@ router.post('/', authenticate, upload.single('invoice'), async (req, res) => {
         percentage: billingPercentage || parseFloat(req.body.percentage),
         amount: billingAmount,
         status,
-        invoice: invoicePath
+        invoice: invoicePath,
+        updatedAt: new Date()
       },
       include: {
         project: {
@@ -387,7 +388,8 @@ router.put('/:id', authenticate, upload.single('invoice'), async (req, res) => {
     let updateData = {
       billingDate: billingDate ? new Date(billingDate) : undefined,
       status,
-      invoice: invoicePath
+      invoice: invoicePath,
+      updatedAt: new Date()
     };
 
     if (percentage && !amount) {

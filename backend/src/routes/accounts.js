@@ -36,7 +36,7 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     // Get accounts with pagination
-    const accounts = await prisma.chartOfAccount.findMany({
+    const accounts = await prisma.chartofaccount.findMany({
       where,
       skip,
       take: pageSize,
@@ -46,7 +46,7 @@ router.get('/', authenticate, async (req, res) => {
     });
 
     // Get total count for pagination
-    const total = await prisma.chartOfAccount.count({ where });
+    const total = await prisma.chartofaccount.count({ where });
 
     res.json({
       success: true,
@@ -75,11 +75,11 @@ router.get('/', authenticate, async (req, res) => {
 router.get('/:code', authenticate, async (req, res) => {
   try {
     const { code } = req.params;
-    const account = await prisma.chartOfAccount.findUnique({
+    const account = await prisma.chartofaccount.findUnique({
       where: { code },
       include: {
         _count: {
-          select: { transactions: true }
+          select: { transaction: true }
         }
       }
     });
@@ -112,7 +112,7 @@ router.get('/:code', authenticate, async (req, res) => {
 router.get('/type/:type', authenticate, async (req, res) => {
   try {
     const { type } = req.params;
-    const accounts = await prisma.chartOfAccount.findMany({
+    const accounts = await prisma.chartofaccount.findMany({
       where: { type },
       orderBy: { code: 'asc' }
     });
@@ -156,7 +156,7 @@ router.post('/', authenticate, authorize(['admin']), async (req, res) => {
     }
 
     // Check if account code already exists
-    const existingAccount = await prisma.chartOfAccount.findUnique({
+    const existingAccount = await prisma.chartofaccount.findUnique({
       where: { code }
     });
 
@@ -179,11 +179,12 @@ router.post('/', authenticate, authorize(['admin']), async (req, res) => {
     }
 
     // Create account
-    const account = await prisma.chartOfAccount.create({
+    const account = await prisma.chartofaccount.create({
       data: {
         code,
         name,
-        type
+        type,
+        updatedAt: new Date()
       }
     });
 
@@ -213,7 +214,7 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
     const { name, type } = req.body;
 
     // Check if account exists
-    const existingAccount = await prisma.chartOfAccount.findUnique({
+    const existingAccount = await prisma.chartofaccount.findUnique({
       where: { code }
     });
 
@@ -235,11 +236,12 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
     }
 
     // Update account
-    const updatedAccount = await prisma.chartOfAccount.update({
+    const updatedAccount = await prisma.chartofaccount.update({
       where: { code },
       data: {
         name,
-        type
+        type,
+        updatedAt: new Date()
       }
     });
 
@@ -249,6 +251,7 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
       data: updatedAccount
     });
   } catch (error) {
+    console.error('Error updating account:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat memperbarui akun',
@@ -265,13 +268,13 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
 router.delete('/:code', authenticate, authorize(['admin']), async (req, res) => {
   try {
     const { code } = req.params;
-
+    
     // Check if account exists
-    const existingAccount = await prisma.chartOfAccount.findUnique({
+    const existingAccount = await prisma.chartofaccount.findUnique({
       where: { code },
       include: {
         _count: {
-          select: { transactions: true }
+          select: { transaction: true }
         }
       }
     });
@@ -282,17 +285,17 @@ router.delete('/:code', authenticate, authorize(['admin']), async (req, res) => 
         message: 'Akun tidak ditemukan' 
       });
     }
-
+    
     // Check if account has transactions
-    if (existingAccount._count.transactions > 0) {
+    if (existingAccount._count.transaction > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Akun ini memiliki transaksi terkait dan tidak dapat dihapus'
+        message: 'Tidak dapat menghapus akun yang memiliki transaksi'
       });
     }
 
     // Delete account
-    await prisma.chartOfAccount.delete({
+    await prisma.chartofaccount.delete({
       where: { code }
     });
 
@@ -301,6 +304,7 @@ router.delete('/:code', authenticate, authorize(['admin']), async (req, res) => 
       message: 'Akun berhasil dihapus'
     });
   } catch (error) {
+    console.error('Error deleting account:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menghapus akun',

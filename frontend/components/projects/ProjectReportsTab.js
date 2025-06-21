@@ -99,7 +99,7 @@ const ProjectReportsTab = ({ projectId }) => {
       const costs = costsResponse.data.data || [];
       
       // Fetch project billings
-      const billingsResponse = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectId}/billings`, {
+      const billingsResponse = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/api/billings/project/${projectId}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

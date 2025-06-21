@@ -7,7 +7,8 @@ const prisma = new PrismaClient();
 
 async function createAdminUser() {
   try {
-    // Check if admin already exists
+    // Delete existing admin if exists
+    console.log('Checking for existing admin user...');
     const existingAdmin = await prisma.user.findFirst({
       where: {
         OR: [
@@ -18,25 +19,34 @@ async function createAdminUser() {
     });
 
     if (existingAdmin) {
-      console.log('Admin user already exists:', existingAdmin.username);
-      return;
+      console.log('Deleting existing admin user:', existingAdmin.username);
+      await prisma.user.delete({
+        where: { id: existingAdmin.id }
+      });
+      console.log('Existing admin user deleted successfully');
     }
 
-    // Create admin user
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    // Create admin user with correct password
+    console.log('Creating new admin user...');
+    const password = 'admin123';
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
     const adminUser = await prisma.user.create({
       data: {
         username: 'admin',
         email: 'admin@example.com',
         password: hashedPassword,
         name: 'Admin User',
-        role: 'admin'
+        role: 'admin',
+        createdAt: new Date(),
+        updatedAt: new Date()
       }
     });
 
-    console.log('Admin user created successfully:', adminUser);
+    console.log('Admin user created successfully:', adminUser.username);
+    console.log('Password set to:', password);
   } catch (error) {
-    console.error('Error creating admin user:', error);
+    console.error('Error managing admin user:', error);
   } finally {
     await prisma.$disconnect();
   }

@@ -292,8 +292,17 @@ const TransactionsPage = () => {
 
   // Get project name by id
   const getProjectName = (projectId) => {
+    // If transaction has a project object, use that directly
+    if (typeof projectId === 'object' && projectId !== null) {
+      return projectId.name || 'N/A';
+    }
+    
+    // If no projectId, return N/A
     if (!projectId) return 'N/A';
-    const project = projects.find(p => p.id === projectId);
+    
+    // Otherwise, look up the project by ID
+    const numericProjectId = parseInt(projectId);
+    const project = projects.find(p => p.id === numericProjectId);
     return project ? project.name : 'N/A';
   };
 
@@ -529,7 +538,7 @@ const TransactionsPage = () => {
                   <Td>
                     {getAccountName(transaction.accountCode)}
                   </Td>
-                  <Td>{getProjectName(transaction.projectId)}</Td>
+                  <Td>{getProjectName(transaction.project || transaction.projectId)}</Td>
                   <Td>
                     {renderTypeBadge(transaction.type)}
                   </Td>

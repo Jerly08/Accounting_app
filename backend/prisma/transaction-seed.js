@@ -1,7 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const { format } = require('date-fns');
 
-const prisma = new PrismaClient();
+// Initialize PrismaClient with logging
+const prisma = new PrismaClient({
+  log: ['error', 'warn', 'info', 'query'],
+});
 
 // Helper function to generate random date within a range
 const randomDate = (start, end) => {

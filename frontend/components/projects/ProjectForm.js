@@ -32,6 +32,7 @@ const initialFormData = {
   endDate: '',
   status: 'ongoing',
   totalValue: '',
+  progress: 0,
 };
 
 const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
@@ -114,6 +115,7 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
         endDate: project.endDate ? new Date(project.endDate).toISOString().split('T')[0] : '',
         status: projectStatus || 'ongoing',
         totalValue: project.totalValue ? project.totalValue.toString() : '',
+        progress: project.progress !== undefined ? project.progress : 0,
       });
     } else {
       setFormData(initialFormData);
@@ -296,12 +298,13 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
       const projectData = {
         projectCode: formData.projectCode.trim(),
         name: formData.name.trim(),
-        description: formData.description?.trim() || '',
+        description: formData.description?.trim() || null,
         clientId: parseInt(formData.clientId),
         startDate: formData.startDate,
         endDate: formData.endDate || null,
         totalValue: parseFloat(formData.totalValue),
         status: formData.status,
+        progress: parseFloat(formData.progress || 0)
       };
       
       // Log data yang akan dikirim
@@ -316,21 +319,32 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
       
       if (project) {
         // Update existing project
-        const response = await axios.put(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${project.id}`,
-          projectData,
-          config
-        );
-        
-        console.log('Server response for update:', response.data);
-        
-        toast({
-          title: 'Success',
-          description: 'Project updated successfully',
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
-        });
+        try {
+          console.log(`Updating project with ID: ${project.id}`);
+          console.log('Update data:', projectData);
+          
+          const response = await axios.put(
+            `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${project.id}`,
+            projectData,
+            config
+          );
+          
+          console.log('Server response for update:', response.data);
+          
+          toast({
+            title: 'Success',
+            description: 'Project updated successfully',
+            status: 'success',
+            duration: 3000,
+            isClosable: true,
+          });
+        } catch (updateError) {
+          console.error('Error updating project:', updateError);
+          if (updateError.response) {
+            console.error('Error response:', updateError.response.data);
+            throw updateError;
+          }
+        }
       } else {
         // Create new project
         const response = await axios.post(
@@ -479,6 +493,7 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
                   onChange={handleChange}
                 >
                   <option value="ongoing">Active</option>
+                  <option value="planned">Planned</option>
                   <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>
                 </Select>
@@ -495,6 +510,19 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
                   <NumberInputField placeholder="Enter total project value" />
                 </NumberInput>
                 <FormErrorMessage>{errors.totalValue}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>Progress (%)</FormLabel>
+                <NumberInput
+                  min={0}
+                  max={100}
+                  value={formData.progress}
+                  onChange={(value) => handleNumberChange('progress', value)}
+                >
+                  <NumberInputField placeholder="Enter project progress percentage" />
+                </NumberInput>
+                <FormErrorMessage>{errors.progress}</FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>

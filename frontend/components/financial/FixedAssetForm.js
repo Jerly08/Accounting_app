@@ -248,7 +248,7 @@ const FixedAssetForm = ({
       if (asset) {
         // Update existing asset
         response = await axios.put(
-          `${process.env.NEXT_PUBLIC_API_URL}/assets/${asset.id}`,
+          `/api/assets/${asset.id}`,
           assetData,
           {
             headers: {
@@ -267,7 +267,7 @@ const FixedAssetForm = ({
       } else {
         // Create new asset
         response = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL}/assets`,
+          `/api/assets`,
           assetData,
           {
             headers: {

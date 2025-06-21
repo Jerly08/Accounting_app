@@ -1,7 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
 
-const prisma = new PrismaClient();
+// Buat instance PrismaClient baru langsung di sini
+const prisma = new PrismaClient({
+  log: ['error', 'warn', 'info', 'query'],
+});
 
 // Data Settings
 const settings = {
@@ -446,133 +449,199 @@ const generateTransactions = (projects, billings, costs) => {
 async function main() {
   console.log('Seeding database...');
   
-  // Seed Settings
-  console.log('Seeding Settings...');
-  const existingSetting = await prisma.setting.findFirst();
-  
-  if (!existingSetting) {
-    await prisma.setting.create({
-      data: settings
-    });
-    console.log('Application settings created.');
-  } else {
-    await prisma.setting.update({
-      where: { id: existingSetting.id },
-      data: settings
-    });
-    console.log('Application settings updated.');
-  }
-  
-  // Seed Chart of Accounts
-  console.log('Seeding Chart of Accounts...');
-  for (const account of chartOfAccounts) {
-    await prisma.chartOfAccount.upsert({
-      where: { code: account.code },
-      update: {},
-      create: account,
-    });
-  }
-  console.log(`${chartOfAccounts.length} accounts created.`);
+  try {
+    // Cek tabel yang ada di database
+    console.log('Checking database tables...');
+    const tables = await prisma.$queryRaw`SHOW TABLES`;
+    console.log('Tables in database:', tables);
+    
+    // Seed Settings
+    console.log('Seeding Settings...');
+    const existingSetting = await prisma.setting.findFirst();
+    
+    if (!existingSetting) {
+      await prisma.setting.create({
+        data: settings
+      });
+      console.log('Application settings created.');
+    } else {
+      await prisma.setting.update({
+        where: { id: existingSetting.id },
+        data: settings
+      });
+      console.log('Application settings updated.');
+    }
+    
+    try {
+      // Seed Chart of Accounts
+      console.log('Seeding Chart of Accounts...');
+      // Menggunakan queryRaw untuk insert langsung ke tabel chartofaccount
+      for (const account of chartOfAccounts) {
+        // Cek apakah akun sudah ada
+        const existingAccounts = await prisma.$queryRaw`
+          SELECT * FROM chartofaccount WHERE code = ${account.code}
+        `;
+        
+        if (existingAccounts.length === 0) {
+          // Jika belum ada, buat baru
+          await prisma.$executeRaw`
+            INSERT INTO chartofaccount (code, name, type, createdAt, updatedAt)
+            VALUES (${account.code}, ${account.name}, ${account.type}, NOW(), NOW())
+          `;
+        }
+      }
+      console.log(`${chartOfAccounts.length} accounts processed.`);
+    } catch (error) {
+      console.error('Error seeding Chart of Accounts:', error);
+      throw error;
+    }
 
-  // Create users
-  console.log('Creating users...');
-  const hashedPassword = await bcrypt.hash('admin123', 10);
-  await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
-    update: {},
-    create: {
-      username: 'admin',
-      email: 'admin@example.com',
-      password: hashedPassword,
-      name: 'Administrator',
-      role: 'admin',
-    },
-  });
-  
-  // Create regular user
-  const userPassword = await bcrypt.hash('user123', 10);
-  await prisma.user.upsert({
-    where: { email: 'user@example.com' },
-    update: {},
-    create: {
-      username: 'user',
-      email: 'user@example.com',
-      password: userPassword,
-      name: 'Regular User',
-      role: 'user',
-    },
-  });
-  console.log('Users created.');
-  
-  // Seed Clients
-  console.log('Seeding Clients...');
-  for (const client of clients) {
-    await prisma.client.upsert({
-      where: { id: clients.indexOf(client) + 1 },
-      update: {},
-      create: client,
-    });
+    try {
+      // Create users
+      console.log('Creating users...');
+      // Menggunakan queryRaw untuk insert langsung ke tabel user
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      
+      // Cek apakah user admin sudah ada
+      const existingAdmins = await prisma.$queryRaw`
+        SELECT * FROM user WHERE email = 'admin@example.com'
+      `;
+      
+      if (existingAdmins.length === 0) {
+        // Jika belum ada, buat baru
+        await prisma.$executeRaw`
+          INSERT INTO user (username, email, password, name, role, createdAt, updatedAt)
+          VALUES ('admin', 'admin@example.com', ${hashedPassword}, 'Administrator', 'admin', NOW(), NOW())
+        `;
+      }
+      
+      // Create regular user
+      const userPassword = await bcrypt.hash('user123', 10);
+      
+      // Cek apakah user regular sudah ada
+      const existingUsers = await prisma.$queryRaw`
+        SELECT * FROM user WHERE email = 'user@example.com'
+      `;
+      
+      if (existingUsers.length === 0) {
+        // Jika belum ada, buat baru
+        await prisma.$executeRaw`
+          INSERT INTO user (username, email, password, name, role, createdAt, updatedAt)
+          VALUES ('user', 'user@example.com', ${userPassword}, 'Regular User', 'user', NOW(), NOW())
+        `;
+      }
+      
+      console.log('Users created.');
+    } catch (error) {
+      console.error('Error creating users:', error);
+      throw error;
+    }
+    
+    try {
+      // Seed Clients
+      console.log('Seeding Clients...');
+      for (const client of clients) {
+        const index = clients.indexOf(client) + 1;
+        
+        // Cek apakah client sudah ada
+        const existingClients = await prisma.$queryRaw`
+          SELECT * FROM client WHERE id = ${index}
+        `;
+        
+        if (existingClients.length === 0) {
+          // Jika belum ada, buat baru
+          await prisma.$executeRaw`
+            INSERT INTO client (id, name, phone, email, address, createdAt, updatedAt)
+            VALUES (${index}, ${client.name}, ${client.phone}, ${client.email}, ${client.address}, NOW(), NOW())
+          `;
+        }
+      }
+      console.log(`${clients.length} clients processed.`);
+    } catch (error) {
+      console.error('Error seeding clients:', error);
+      throw error;
+    }
+    
+    try {
+      // Seed Projects
+      console.log('Seeding Projects...');
+      for (const project of projects) {
+        // Cek apakah project sudah ada
+        const existingProjects = await prisma.$queryRaw`
+          SELECT * FROM project WHERE projectCode = ${project.projectCode}
+        `;
+        
+        if (existingProjects.length === 0) {
+          // Format tanggal untuk SQL
+          const startDate = project.startDate.toISOString().slice(0, 19).replace('T', ' ');
+          const endDate = project.endDate ? project.endDate.toISOString().slice(0, 19).replace('T', ' ') : null;
+          
+          // Jika belum ada, buat baru
+          if (endDate) {
+            await prisma.$executeRaw`
+              INSERT INTO project (projectCode, name, clientId, startDate, endDate, totalValue, status, createdAt, updatedAt)
+              VALUES (${project.projectCode}, ${project.name}, ${project.clientId}, ${startDate}, ${endDate}, ${project.totalValue}, ${project.status}, NOW(), NOW())
+            `;
+          } else {
+            await prisma.$executeRaw`
+              INSERT INTO project (projectCode, name, clientId, startDate, totalValue, status, createdAt, updatedAt)
+              VALUES (${project.projectCode}, ${project.name}, ${project.clientId}, ${startDate}, ${project.totalValue}, ${project.status}, NOW(), NOW())
+            `;
+          }
+        }
+      }
+      console.log(`${projects.length} projects processed.`);
+      
+      // Get created projects with IDs
+      const createdProjects = await prisma.$queryRaw`SELECT * FROM project`;
+      
+      // Seed Project Costs - Lewati dulu untuk sementara
+      console.log('Skipping Project Costs for now...');
+      
+      // Seed Billings - Lewati dulu untuk sementara
+      console.log('Skipping Billings for now...');
+    } catch (error) {
+      console.error('Error seeding projects:', error);
+      throw error;
+    }
+    
+    try {
+      // Seed Fixed Assets
+      console.log('Seeding Fixed Assets...');
+      for (const asset of fixedAssets) {
+        // Format tanggal untuk SQL
+        const acquisitionDate = asset.acquisitionDate.toISOString().slice(0, 19).replace('T', ' ');
+        
+        // Cek apakah asset sudah ada berdasarkan nama
+        const existingAssets = await prisma.$queryRaw`
+          SELECT * FROM fixedasset WHERE assetName = ${asset.assetName}
+        `;
+        
+        if (existingAssets.length === 0) {
+          // Pastikan category tidak null
+          const category = asset.category || 'equipment';
+          
+          // Jika belum ada, buat baru
+          await prisma.$executeRaw`
+            INSERT INTO fixedasset (assetName, category, acquisitionDate, value, usefulLife, accumulatedDepreciation, bookValue, createdAt, updatedAt)
+            VALUES (${asset.assetName}, ${category}, ${acquisitionDate}, ${asset.value}, ${asset.usefulLife}, ${asset.accumulatedDepreciation}, ${asset.bookValue}, NOW(), NOW())
+          `;
+        }
+      }
+      console.log(`${fixedAssets.length} fixed assets processed.`);
+    } catch (error) {
+      console.error('Error seeding fixed assets:', error);
+      throw error;
+    }
+    
+    // Skipping Transactions
+    console.log('Skipping Transactions for now...');
+    
+    console.log('Database seeded successfully');
+  } catch (error) {
+    console.error('Seeding failed with error:', error);
+    throw error;
   }
-  console.log(`${clients.length} clients created.`);
-  
-  // Seed Projects
-  console.log('Seeding Projects...');
-  for (const project of projects) {
-    await prisma.project.upsert({
-      where: { projectCode: project.projectCode },
-      update: {},
-      create: project,
-    });
-  }
-  console.log(`${projects.length} projects created.`);
-  
-  // Get created projects with IDs
-  const createdProjects = await prisma.project.findMany();
-  
-  // Seed Project Costs
-  console.log('Seeding Project Costs...');
-  const projectCosts = generateProjectCosts(createdProjects);
-  for (const cost of projectCosts) {
-    await prisma.projectCost.create({
-      data: cost,
-    });
-  }
-  console.log(`${projectCosts.length} project costs created.`);
-  
-  // Seed Billings
-  console.log('Seeding Billings...');
-  const billings = generateBillings(createdProjects);
-  for (const billing of billings) {
-    await prisma.billing.create({
-      data: billing,
-    });
-  }
-  console.log(`${billings.length} billings created.`);
-  
-  // Seed Fixed Assets
-  console.log('Seeding Fixed Assets...');
-  for (const asset of fixedAssets) {
-    await prisma.fixedAsset.create({
-      data: asset,
-    });
-  }
-  console.log(`${fixedAssets.length} fixed assets created.`);
-  
-  // Get created billings and costs
-  const createdBillings = await prisma.billing.findMany();
-  const createdCosts = await prisma.projectCost.findMany();
-  
-  // Seed Transactions
-  console.log('Seeding Transactions...');
-  const transactions = generateTransactions(createdProjects, createdBillings, createdCosts);
-  for (const transaction of transactions) {
-    await prisma.transaction.create({
-      data: transaction,
-    });
-  }
-  console.log(`${transactions.length} transactions created.`);
-
-  console.log('Database seeded successfully');
 }
 
 main()

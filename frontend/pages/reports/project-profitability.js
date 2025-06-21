@@ -47,6 +47,7 @@ const ProjectProfitabilityPage = () => {
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
   const cardBg = useColorModeValue('white', 'gray.700');
+  const [summary, setSummary] = useState(null);
 
   // Format currency
   const formatCurrency = (amount) => {
@@ -64,20 +65,26 @@ const ProjectProfitabilityPage = () => {
 
   // Calculate profitability metrics
   const calculateProfitability = (project) => {
+    // Ensure we have valid numbers
+    const totalValue = parseFloat(project.totalValue || 0);
     const totalCosts = project.costs || 0;
     const totalBilled = project.billed || 0;
-    const totalValue = project.totalValue || 0;
     
+    // For construction projects, profit should be calculated against total project value
+    // This follows percentage of completion accounting method
     const profit = totalBilled - totalCosts;
-    const profitMargin = totalBilled > 0 ? (profit / totalBilled) * 100 : 0;
-    const costRatio = totalCosts > 0 && totalValue > 0 ? (totalCosts / totalValue) * 100 : 0;
-    const progress = totalValue > 0 ? (totalBilled / totalValue) * 100 : 0;
+    
+    // Profit margin in construction is typically calculated against total value
+    // This provides a better view of project health than margin against billings
+    const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
+    
+    // For construction/engineering projects, use progress-based completion or billing-based if progress is not available
+    const completion = project.progress ? parseFloat(project.progress) : (totalValue > 0 ? (totalBilled / totalValue) * 100 : 0);
     
     return {
       profit,
       profitMargin,
-      costRatio,
-      progress,
+      completion,
     };
   };
 
@@ -92,44 +99,29 @@ const ProjectProfitabilityPage = () => {
     try {
       setLoading(true);
       
-      // Fetch projects with costs and billings
+      // Use the dedicated profitability report endpoint
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/projects`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/profitability/report`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
           },
           params: {
-            include: 'costs,billings',
+            // You can add filters here if needed
           }
         }
       );
       
-      // Process project data to calculate profitability
-      const projectsWithProfitability = response.data.data.map(project => {
-        // Calculate total costs
-        const totalCosts = project.projectCosts ? 
-          project.projectCosts.reduce((sum, cost) => sum + parseFloat(cost.amount || 0), 0) : 0;
+      if (response.data.success) {
+        // The API now returns pre-calculated profitability metrics
+        setProjects(response.data.data);
         
-        // Calculate total billed
-        const totalBilled = project.billings ?
-          project.billings.reduce((sum, billing) => sum + parseFloat(billing.amount || 0), 0) : 0;
-        
-        // Add profitability data
-        return {
-          ...project,
-          costs: totalCosts,
-          billed: totalBilled,
-          ...calculateProfitability({
-            costs: totalCosts,
-            billed: totalBilled,
-            totalValue: parseFloat(project.totalValue || 0)
-          })
-        };
-      });
+        // Store the summary data for the stats cards
+        setSummary(response.data.summary);
+      } else {
+        setError(response.data.message || 'Failed to load profitability data');
+      }
       
-      setProjects(projectsWithProfitability);
-      setError(null);
     } catch (error) {
       console.error('Error fetching project profitability data:', error);
       
@@ -154,12 +146,26 @@ const ProjectProfitabilityPage = () => {
     ? projects 
     : projects.filter(project => project.id.toString() === selectedProject);
 
-  // Calculate overall statistics
-  const totalCosts = filteredProjects.reduce((sum, project) => sum + project.costs, 0);
-  const totalBilled = filteredProjects.reduce((sum, project) => sum + project.billed, 0);
-  const totalValue = filteredProjects.reduce((sum, project) => sum + parseFloat(project.totalValue || 0), 0);
-  const totalProfit = totalBilled - totalCosts;
-  const overallProfitMargin = totalBilled > 0 ? (totalProfit / totalBilled) * 100 : 0;
+  // Calculate stats for filtered projects (only needed when a specific project is selected)
+  const totalValue = selectedProject === 'all' && summary 
+    ? summary.totalValue 
+    : filteredProjects.reduce((sum, project) => sum + parseFloat(project.totalValue || 0), 0);
+
+  const totalCosts = selectedProject === 'all' && summary
+    ? summary.totalCosts
+    : filteredProjects.reduce((sum, project) => sum + (project.costs || 0), 0);
+
+  const totalBilled = selectedProject === 'all' && summary
+    ? summary.totalBilled
+    : filteredProjects.reduce((sum, project) => sum + (project.billed || 0), 0);
+
+  const totalProfit = selectedProject === 'all' && summary
+    ? summary.totalProfit
+    : filteredProjects.reduce((sum, project) => sum + (project.profit || 0), 0);
+
+  const overallProfitMargin = selectedProject === 'all' && summary
+    ? summary.profitMargin
+    : (totalValue > 0 ? (totalProfit / totalValue) * 100 : 0);
 
   // Prepare data for export
   const prepareExportData = () => {

@@ -59,8 +59,8 @@ router.get('/', authenticate, async (req, res) => {
         },
         _count: {
           select: {
-            projectCosts: true,
-            billings: true
+            projectcost: true,
+            billing: true
           }
         }
       }
@@ -80,6 +80,7 @@ router.get('/', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching projects:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat mengambil data proyek',
@@ -100,12 +101,12 @@ router.get('/:id', authenticate, async (req, res) => {
       where: { id: parseInt(id) },
       include: {
         client: true,
-        projectCosts: {
+        projectcost: {
           orderBy: {
             date: 'desc'
           }
         },
-        billings: {
+        billing: {
           orderBy: {
             billingDate: 'desc'
           }
@@ -121,17 +122,17 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 
     // Calculate project summary
-    const totalCosts = project.projectCosts.reduce(
+    const totalCosts = project.projectcost.reduce(
       (sum, cost) => sum + parseFloat(cost.amount.toString()), 
       0
     );
     
-    const totalBilled = project.billings.reduce(
+    const totalBilled = project.billing.reduce(
       (sum, billing) => sum + parseFloat(billing.amount.toString()),
       0
     );
     
-    const totalPaid = project.billings
+    const totalPaid = project.billing
       .filter(billing => billing.status === 'paid')
       .reduce((sum, billing) => sum + parseFloat(billing.amount.toString()), 0);
 
@@ -169,11 +170,13 @@ router.post('/', authenticate, async (req, res) => {
   try {
     const { 
       projectCode, 
-      name, 
+      name,
+      description,
       clientId, 
       startDate, 
       endDate, 
-      totalValue, 
+      totalValue,
+      progress = 0,
       status = 'ongoing'
     } = req.body;
 
@@ -198,7 +201,7 @@ router.post('/', authenticate, async (req, res) => {
     }
 
     // Validate status
-    const validStatuses = ['ongoing', 'completed', 'cancelled'];
+    const validStatuses = ['ongoing', 'completed', 'cancelled', 'planned'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -207,16 +210,27 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
+    // Validate progress
+    if (progress < 0 || progress > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Progress harus antara 0 dan 100'
+      });
+    }
+
     // Create project
     const project = await prisma.project.create({
       data: {
         projectCode,
         name,
+        description,
         clientId: parseInt(clientId),
         startDate: new Date(startDate),
         endDate: endDate ? new Date(endDate) : null,
         totalValue: parseFloat(totalValue),
-        status
+        progress: parseFloat(progress),
+        status,
+        updatedAt: new Date()
       },
       include: {
         client: {
@@ -249,13 +263,18 @@ router.post('/', authenticate, async (req, res) => {
 router.put('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
+    console.log(`Updating project with ID: ${id}`);
+    console.log('Full request body:', JSON.stringify(req.body, null, 2));
+
     const { 
       name, 
+      description,
       clientId, 
       startDate, 
       endDate, 
-      totalValue, 
-      status 
+      totalValue,
+      progress, 
+      status
     } = req.body;
 
     // Check if project exists
@@ -264,15 +283,28 @@ router.put('/:id', authenticate, async (req, res) => {
     });
 
     if (!existingProject) {
+      console.log(`Project with ID ${id} not found`);
       return res.status(404).json({ 
         success: false, 
         message: 'Proyek tidak ditemukan' 
       });
     }
 
+    console.log('Existing project:', JSON.stringify(existingProject, null, 2));
+
+    // Validate required fields
+    if (!name) {
+      console.log('Missing required field: name');
+      return res.status(400).json({
+        success: false,
+        message: 'Nama proyek wajib diisi'
+      });
+    }
+
     // Validate status
-    const validStatuses = ['ongoing', 'completed', 'cancelled'];
+    const validStatuses = ['ongoing', 'completed', 'cancelled', 'planned'];
     if (status && !validStatuses.includes(status)) {
+      console.log(`Invalid status: ${status}`);
       return res.status(400).json({
         success: false,
         message: 'Status tidak valid',
@@ -280,29 +312,66 @@ router.put('/:id', authenticate, async (req, res) => {
       });
     }
 
-    // Update project
-    const updatedProject = await prisma.project.update({
-      where: { id: parseInt(id) },
-      data: {
-        name,
-        clientId: clientId ? parseInt(clientId) : undefined,
-        startDate: startDate ? new Date(startDate) : undefined,
-        endDate: endDate ? new Date(endDate) : endDate === null ? null : undefined,
-        totalValue: totalValue ? parseFloat(totalValue) : undefined,
-        status
-      }
-    });
+    // Validate progress if provided
+    if (progress !== undefined && (progress < 0 || progress > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Progress harus antara 0 dan 100'
+      });
+    }
 
-    res.json({
-      success: true,
-      message: 'Proyek berhasil diperbarui',
-      data: updatedProject
-    });
+    // Prepare update data
+    const updateData = {
+      name,
+      description: description === '' ? null : description,
+      clientId: clientId ? parseInt(clientId) : undefined,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : endDate === null ? null : undefined,
+      totalValue: totalValue ? parseFloat(totalValue) : undefined,
+      status,
+      updatedAt: new Date()
+    };
+
+    // Add progress to update data if provided
+    if (progress !== undefined) {
+      updateData.progress = parseFloat(progress);
+    }
+
+    console.log('Update data:', JSON.stringify(updateData, null, 2));
+
+    try {
+      // Update project
+      const updatedProject = await prisma.project.update({
+        where: { id: parseInt(id) },
+        data: updateData
+      });
+
+      console.log('Project updated successfully:', JSON.stringify(updatedProject, null, 2));
+
+      res.json({
+        success: true,
+        message: 'Proyek berhasil diperbarui',
+        data: updatedProject
+      });
+    } catch (updateError) {
+      console.error('Error during update operation:', updateError);
+      throw updateError;
+    }
   } catch (error) {
+    console.error('Error updating project:', error);
+    
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: 'Proyek tidak ditemukan'
+      });
+    }
+    
     res.status(500).json({ 
       success: false, 
       message: 'Error saat memperbarui proyek',
-      error: error.message 
+      error: error.message,
+      stack: error.stack
     });
   }
 });
@@ -322,9 +391,9 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
       include: {
         _count: {
           select: {
-            projectCosts: true,
-            billings: true,
-            transactions: true
+            projectcost: true,
+            billing: true,
+            transaction: true
           }
         }
       }
@@ -339,9 +408,9 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
 
     // Check if project has related data
     if (
-      existingProject._count.projectCosts > 0 ||
-      existingProject._count.billings > 0 ||
-      existingProject._count.transactions > 0
+      existingProject._count.projectcost > 0 ||
+      existingProject._count.billing > 0 ||
+      existingProject._count.transaction > 0
     ) {
       return res.status(400).json({
         success: false,
@@ -406,37 +475,62 @@ const upload = multer({
 });
 
 /**
- * @route   GET /api/projects/:projectId/costs
- * @desc    Get all costs for a project
+ * @route   GET /api/projects/:id/costs
+ * @desc    Get project costs
  * @access  Private
  */
-router.get('/:projectId/costs', authenticate, async (req, res) => {
+router.get('/:id/costs', authenticate, async (req, res) => {
   try {
-    const { projectId } = req.params;
-    const { category, limit, page } = req.query;
+    const { id } = req.params;
+    const { search, category, status, limit, page } = req.query;
+    
     const pageNumber = parseInt(page) || 1;
-    const pageSize = parseInt(limit) || 20;
+    const pageSize = parseInt(limit) || 10;
     const skip = (pageNumber - 1) * pageSize;
 
     // Build filter conditions
-    let where = { projectId: parseInt(projectId) };
-    if (category) {
-      where.category = category;
+    let where = {
+      projectId: parseInt(id)
+    };
+
+    if (search) {
+      where = {
+        ...where,
+        description: {
+          contains: search
+        }
+      };
     }
 
-    // Get project costs
-    const costs = await prisma.projectCost.findMany({
+    if (category) {
+      where = {
+        ...where,
+        category
+      };
+    }
+
+    if (status) {
+      where = {
+        ...where,
+        status
+      };
+    }
+
+    // Get costs with pagination
+    const costs = await prisma.projectcost.findMany({
       where,
       skip,
       take: pageSize,
-      orderBy: { date: 'desc' }
+      orderBy: [
+        { date: 'desc' }
+      ]
     });
 
-    // Get total count
-    const total = await prisma.projectCost.count({ where });
-
+    // Get total count for pagination
+    const total = await prisma.projectcost.count({ where });
+    
     // Get total amount
-    const totalAmount = await prisma.projectCost.aggregate({
+    const totalAmount = await prisma.projectcost.aggregate({
       where,
       _sum: {
         amount: true
@@ -457,206 +551,168 @@ router.get('/:projectId/costs', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching project costs:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Error saat mengambil data biaya',
+      message: 'Error saat mengambil data biaya proyek',
       error: error.message 
     });
   }
 });
 
 /**
- * @route   POST /api/projects/:projectId/costs
- * @desc    Add cost to a project
+ * @route   POST /api/projects/:id/costs
+ * @desc    Add project cost
  * @access  Private
  */
-router.post(
-  '/:projectId/costs',
-  authenticate,
-  upload.single('receipt'),
-  async (req, res) => {
-    try {
-      const { projectId } = req.params;
-      const { category, description, amount, date, status = 'pending' } = req.body;
-      
-      // Validate project exists
-      const project = await prisma.project.findUnique({
-        where: { id: parseInt(projectId) }
-      });
+router.post('/:id/costs', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      category, 
+      description, 
+      amount, 
+      date, 
+      status = 'pending',
+      receipt
+    } = req.body;
 
-      if (!project) {
-        return res.status(404).json({
-          success: false,
-          message: 'Proyek tidak ditemukan'
-        });
-      }
+    // Check if project exists
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(id) }
+    });
 
-      // Process receipt file if uploaded
-      let receiptPath = null;
-      if (req.file) {
-        receiptPath = `/uploads/receipts/${req.file.filename}`;
-      }
-
-      // Validate required fields
-      if (!category || !description || !amount || !date) {
-        return res.status(400).json({
-          success: false,
-          message: 'Kategori, deskripsi, jumlah, dan tanggal wajib diisi'
-        });
-      }
-
-      // Validate status
-      const validStatuses = ['pending', 'approved', 'rejected'];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Status tidak valid',
-          validStatuses
-        });
-      }
-
-      // Create project cost
-      const projectCost = await prisma.projectCost.create({
-        data: {
-          projectId: parseInt(projectId),
-          category,
-          description,
-          amount: parseFloat(amount),
-          date: new Date(date),
-          status,
-          receipt: receiptPath
-        }
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Biaya proyek berhasil ditambahkan',
-        data: projectCost
-      });
-    } catch (error) {
-      res.status(500).json({ 
+    if (!project) {
+      return res.status(404).json({ 
         success: false, 
-        message: 'Error saat menambahkan biaya proyek',
-        error: error.message 
+        message: 'Proyek tidak ditemukan' 
       });
     }
+
+    // Validate required fields
+    if (!category || !description || !amount || !date) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Kategori, deskripsi, jumlah, dan tanggal wajib diisi' 
+      });
+    }
+
+    // Create project cost
+    const projectCost = await prisma.projectcost.create({
+      data: {
+        projectId: parseInt(id),
+        category,
+        description,
+        amount: parseFloat(amount),
+        date: new Date(date),
+        status,
+        receipt,
+        updatedAt: new Date()
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Biaya proyek berhasil ditambahkan',
+      data: projectCost
+    });
+  } catch (error) {
+    console.error('Error adding project cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat menambahkan biaya proyek',
+      error: error.message 
+    });
   }
-);
+});
 
 /**
- * @route   PUT /api/projects/:projectId/costs/:costId
+ * @route   PUT /api/projects/:id/costs/:costId
  * @desc    Update project cost
  * @access  Private
  */
-router.put(
-  '/:projectId/costs/:costId',
-  authenticate,
-  upload.single('receipt'),
-  async (req, res) => {
-    try {
-      const { projectId, costId } = req.params;
-      const { category, description, amount, date, status } = req.body;
-
-      // Check if cost exists and belongs to the project
-      const existingCost = await prisma.projectCost.findFirst({
-        where: {
-          id: parseInt(costId),
-          projectId: parseInt(projectId)
-        }
-      });
-
-      if (!existingCost) {
-        return res.status(404).json({
-          success: false,
-          message: 'Biaya proyek tidak ditemukan'
-        });
-      }
-
-      // Process receipt file if uploaded
-      let receiptPath = existingCost.receipt;
-      if (req.file) {
-        // Delete old receipt if exists
-        if (existingCost.receipt) {
-          const oldPath = path.join(__dirname, '../../../', existingCost.receipt);
-          if (fs.existsSync(oldPath)) {
-            fs.unlinkSync(oldPath);
-          }
-        }
-        receiptPath = `/uploads/receipts/${req.file.filename}`;
-      }
-
-      // Validate status
-      const validStatuses = ['pending', 'approved', 'rejected'];
-      if (status && !validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Status tidak valid',
-          validStatuses
-        });
-      }
-
-      // Update project cost
-      const updatedCost = await prisma.projectCost.update({
-        where: { id: parseInt(costId) },
-        data: {
-          category,
-          description,
-          amount: amount ? parseFloat(amount) : undefined,
-          date: date ? new Date(date) : undefined,
-          status,
-          receipt: receiptPath
-        }
-      });
-
-      res.json({
-        success: true,
-        message: 'Biaya proyek berhasil diperbarui',
-        data: updatedCost
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Error saat memperbarui biaya proyek',
-        error: error.message 
-      });
-    }
-  }
-);
-
-/**
- * @route   DELETE /api/projects/:projectId/costs/:costId
- * @desc    Delete project cost
- * @access  Private
- */
-router.delete('/:projectId/costs/:costId', authenticate, async (req, res) => {
+router.put('/:id/costs/:costId', authenticate, async (req, res) => {
   try {
-    const { projectId, costId } = req.params;
+    const { id, costId } = req.params;
+    const { 
+      category, 
+      description, 
+      amount, 
+      date, 
+      status,
+      receipt
+    } = req.body;
 
     // Check if cost exists and belongs to the project
-    const existingCost = await prisma.projectCost.findFirst({
-      where: {
+    const existingCost = await prisma.projectcost.findFirst({
+      where: { 
         id: parseInt(costId),
-        projectId: parseInt(projectId)
+        projectId: parseInt(id)
       }
     });
 
     if (!existingCost) {
-      return res.status(404).json({
-        success: false,
-        message: 'Biaya proyek tidak ditemukan'
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Biaya proyek tidak ditemukan' 
       });
     }
 
-    // Delete receipt file if exists
-    if (existingCost.receipt) {
-      const filePath = path.join(__dirname, '../../../', existingCost.receipt);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    // Update project cost
+    const updatedCost = await prisma.projectcost.update({
+      where: { id: parseInt(costId) },
+      data: {
+        category,
+        description,
+        amount: amount ? parseFloat(amount) : undefined,
+        date: date ? new Date(date) : undefined,
+        status,
+        receipt,
+        updatedAt: new Date()
       }
+    });
+
+    res.json({
+      success: true,
+      message: 'Biaya proyek berhasil diperbarui',
+      data: updatedCost
+    });
+  } catch (error) {
+    console.error('Error updating project cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat memperbarui biaya proyek',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   DELETE /api/projects/:id/costs/:costId
+ * @desc    Delete project cost
+ * @access  Private
+ */
+router.delete('/:id/costs/:costId', authenticate, async (req, res) => {
+  try {
+    const { id, costId } = req.params;
+    
+    // Check if cost exists and belongs to the project
+    const existingCost = await prisma.projectcost.findFirst({
+      where: { 
+        id: parseInt(costId),
+        projectId: parseInt(id)
+      }
+    });
+
+    if (!existingCost) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Biaya proyek tidak ditemukan' 
+      });
     }
 
     // Delete project cost
-    await prisma.projectCost.delete({
+    await prisma.projectcost.delete({
       where: { id: parseInt(costId) }
     });
 
@@ -665,6 +721,7 @@ router.delete('/:projectId/costs/:costId', authenticate, async (req, res) => {
       message: 'Biaya proyek berhasil dihapus'
     });
   } catch (error) {
+    console.error('Error deleting project cost:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menghapus biaya proyek',
@@ -674,139 +731,166 @@ router.delete('/:projectId/costs/:costId', authenticate, async (req, res) => {
 });
 
 /**
- * @route   POST /api/projects/:projectId/costs/:costId/receipt
- * @desc    Upload receipt for a project cost
- * @access  Private
+ * @route   PUT /api/projects/:id/costs/:costId/approve
+ * @desc    Approve project cost
+ * @access  Private (Admin only)
  */
-router.post(
-  '/:projectId/costs/:costId/receipt',
-  authenticate,
-  upload.single('receipt'),
-  async (req, res) => {
-    try {
-      const { projectId, costId } = req.params;
-
-      // Check if cost exists and belongs to the project
-      const existingCost = await prisma.projectCost.findFirst({
-        where: {
-          id: parseInt(costId),
-          projectId: parseInt(projectId)
-        }
-      });
-
-      if (!existingCost) {
-        return res.status(404).json({
-          success: false,
-          message: 'Biaya proyek tidak ditemukan'
-        });
+router.put('/:id/costs/:costId/approve', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const { id, costId } = req.params;
+    
+    // Check if cost exists and belongs to the project
+    const existingCost = await prisma.projectcost.findFirst({
+      where: { 
+        id: parseInt(costId),
+        projectId: parseInt(id)
       }
+    });
 
-      // Validate file was uploaded
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'Tidak ada file yang diunggah'
-        });
-      }
-
-      // Process receipt file
-      const receiptPath = `/uploads/receipts/${req.file.filename}`;
-
-      // Delete old receipt if exists
-      if (existingCost.receipt) {
-        const oldPath = path.join(__dirname, '../../../', existingCost.receipt);
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-        }
-      }
-
-      // Update project cost with new receipt path
-      const updatedCost = await prisma.projectCost.update({
-        where: { id: parseInt(costId) },
-        data: {
-          receipt: receiptPath
-        }
-      });
-
-      res.json({
-        success: true,
-        message: 'Receipt berhasil diunggah',
-        data: {
-          receiptPath
-        }
-      });
-    } catch (error) {
-      console.error('Error uploading receipt:', error);
-      res.status(500).json({ 
+    if (!existingCost) {
+      return res.status(404).json({ 
         success: false, 
-        message: 'Error saat mengunggah receipt',
-        error: error.message 
+        message: 'Biaya proyek tidak ditemukan' 
       });
     }
+
+    // Update cost status to approved
+    const updatedCost = await prisma.projectcost.update({
+      where: { id: parseInt(costId) },
+      data: {
+        status: 'approved',
+        updatedAt: new Date()
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Biaya proyek berhasil disetujui',
+      data: updatedCost
+    });
+  } catch (error) {
+    console.error('Error approving project cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat menyetujui biaya proyek',
+      error: error.message 
+    });
   }
-);
+});
 
 /**
- * @route   DELETE /api/projects/:projectId/costs/:costId/receipt
- * @desc    Delete receipt for a project cost
- * @access  Private
+ * @route   PUT /api/projects/:id/costs/:costId/reject
+ * @desc    Reject project cost
+ * @access  Private (Admin only)
  */
-router.delete(
-  '/:projectId/costs/:costId/receipt',
-  authenticate,
-  async (req, res) => {
-    try {
-      const { projectId, costId } = req.params;
-
-      // Check if cost exists and belongs to the project
-      const existingCost = await prisma.projectCost.findFirst({
-        where: {
-          id: parseInt(costId),
-          projectId: parseInt(projectId)
-        }
-      });
-
-      if (!existingCost) {
-        return res.status(404).json({
-          success: false,
-          message: 'Biaya proyek tidak ditemukan'
-        });
+router.put('/:id/costs/:costId/reject', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const { id, costId } = req.params;
+    const { rejectionReason } = req.body;
+    
+    // Check if cost exists and belongs to the project
+    const existingCost = await prisma.projectcost.findFirst({
+      where: { 
+        id: parseInt(costId),
+        projectId: parseInt(id)
       }
+    });
 
-      // Check if receipt exists
-      if (!existingCost.receipt) {
-        return res.status(404).json({
-          success: false,
-          message: 'Tidak ada receipt untuk biaya ini'
-        });
-      }
-
-      // Delete receipt file
-      const filePath = path.join(__dirname, '../../../', existingCost.receipt);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-      // Update project cost to remove receipt path
-      const updatedCost = await prisma.projectCost.update({
-        where: { id: parseInt(costId) },
-        data: {
-          receipt: null
-        }
-      });
-
-      res.json({
-        success: true,
-        message: 'Receipt berhasil dihapus'
-      });
-    } catch (error) {
-      res.status(500).json({ 
+    if (!existingCost) {
+      return res.status(404).json({ 
         success: false, 
-        message: 'Error saat menghapus receipt',
-        error: error.message 
+        message: 'Biaya proyek tidak ditemukan' 
       });
     }
+
+    // Update cost status to rejected
+    const updatedCost = await prisma.projectcost.update({
+      where: { id: parseInt(costId) },
+      data: {
+        status: 'rejected',
+        description: rejectionReason ? 
+          `${existingCost.description} [REJECTED: ${rejectionReason}]` : 
+          existingCost.description,
+        updatedAt: new Date()
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Biaya proyek berhasil ditolak',
+      data: updatedCost
+    });
+  } catch (error) {
+    console.error('Error rejecting project cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat menolak biaya proyek',
+      error: error.message 
+    });
   }
-);
+});
+
+/**
+ * @route   GET /api/projects/:id/billings
+ * @desc    Get billings for a specific project (compatibility route)
+ * @access  Private
+ */
+router.get('/:id/billings', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.query;
+
+    // Build filter conditions
+    let where = { 
+      projectId: parseInt(id) 
+    };
+    
+    if (status) {
+      where.status = status;
+    }
+
+    // Get all billings for the project
+    const billings = await prisma.billing.findMany({
+      where,
+      orderBy: [
+        { billingDate: 'desc' }
+      ]
+    });
+
+    // Get total amount
+    const totalAmount = await prisma.billing.aggregate({
+      where,
+      _sum: {
+        amount: true
+      }
+    });
+
+    // Get project details
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(id) },
+      select: {
+        totalValue: true
+      }
+    });
+
+    const percentageBilled = project ? 
+      (totalAmount._sum.amount / parseFloat(project.totalValue.toString())) * 100 : 0;
+
+    res.json({
+      success: true,
+      data: billings,
+      summary: {
+        totalAmount: totalAmount._sum.amount || 0,
+        percentageBilled: parseFloat(percentageBilled.toFixed(2))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat mengambil data penagihan proyek',
+      error: error.message 
+    });
+  }
+});
 
 module.exports = router; 

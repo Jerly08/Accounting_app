@@ -143,7 +143,8 @@ const BalanceSheetPage = () => {
       totalEquityWithIncome,
       totalLiabilitiesAndEquity, 
       isBalanced,
-      totalNegativeWIP
+      totalNegativeWIP,
+      totalContraAssets
     } = balanceSheet.summary;
     
     return {
@@ -152,6 +153,7 @@ const BalanceSheetPage = () => {
       totalEquity,
       netIncome: netIncome || 0,
       totalNegativeWIP: totalNegativeWIP || 0,
+      totalContraAssets: totalContraAssets || 0,
       totalEquityWithIncome: totalEquityWithIncome || (totalEquity + (netIncome || 0)),
       totalLiabilitiesAndEquity: totalLiabilitiesAndEquity || (totalLiabilities + totalEquity + (netIncome || 0)),
       isBalanced
@@ -442,7 +444,7 @@ const BalanceSheetPage = () => {
       </SimpleGrid>
       
       {/* Net Income and Total Equity with Income Cards */}
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={6}>
+      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Net Income</StatLabel>
           <StatNumber>{formatCurrency(totals.netIncome)}</StatNumber>
@@ -460,6 +462,12 @@ const BalanceSheetPage = () => {
           <StatLabel>Total Equity with Income</StatLabel>
           <StatNumber>{formatCurrency(totals.totalEquityWithIncome)}</StatNumber>
           <StatHelpText>Equity + Net Income</StatHelpText>
+        </Stat>
+
+        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
+          <StatLabel>Total Liabilities and Equity</StatLabel>
+          <StatNumber>{formatCurrency(totals.totalLiabilitiesAndEquity)}</StatNumber>
+          <StatHelpText>Should equal Total Assets</StatHelpText>
         </Stat>
       </SimpleGrid>
 
@@ -530,6 +538,26 @@ const BalanceSheetPage = () => {
                       <Td isNumeric>{formatCurrency(totals.totalAssets)}</Td>
                     </Tr>
                     <Tr>
+                      <Td pl={8}>Total Account Assets</Td>
+                      <Td isNumeric>{formatCurrency(balanceSheet.summary.totalAccountAssets)}</Td>
+                    </Tr>
+                    <Tr>
+                      <Td pl={8}>Total Fixed Assets</Td>
+                      <Td isNumeric>{formatCurrency(balanceSheet.summary.totalFixedAssets)}</Td>
+                    </Tr>
+                    {balanceSheet.summary.totalWIP > 0 && (
+                      <Tr>
+                        <Td pl={8}>Total Work In Progress</Td>
+                        <Td isNumeric>{formatCurrency(balanceSheet.summary.totalWIP)}</Td>
+                      </Tr>
+                    )}
+                    {balanceSheet.summary.totalContraAssets !== 0 && (
+                      <Tr>
+                        <Td pl={8}>Total Accumulated Depreciation</Td>
+                        <Td isNumeric>{formatCurrency(balanceSheet.summary.totalContraAssets)}</Td>
+                      </Tr>
+                    )}
+                    <Tr>
                       <Td fontWeight="bold">Total Liabilities</Td>
                       <Td isNumeric>{formatCurrency(totals.totalLiabilities)}</Td>
                     </Tr>
@@ -573,6 +601,8 @@ const BalanceSheetPage = () => {
                     </Text>
                   </Alert>
                 )}
+                
+                {/* Remove Debug Information Section */}
               </Box>
             </TabPanel>
           </TabPanels>

@@ -28,6 +28,7 @@ import {
   AlertTitle,
   AlertDescription,
   useDisclosure,
+  Progress,
 } from '@chakra-ui/react';
 import { FiEdit, FiCalendar, FiDollarSign, FiUser, FiClock, FiAlertCircle } from 'react-icons/fi';
 import axios from 'axios';
@@ -295,8 +296,21 @@ const ProjectDetailPage = () => {
               <StatLabel>Progress</StatLabel>
             </Flex>
             <StatNumber fontSize="xl">
-              {project.status === 'completed' ? '100%' : 'In Progress'}
+              {project.status === 'completed' ? '100%' : project.progress ? `${project.progress}%` : 'In Progress'}
             </StatNumber>
+            {project.progress !== null && project.progress !== undefined && (
+              <Progress 
+                value={project.status === 'completed' ? 100 : project.progress} 
+                size="sm" 
+                colorScheme={
+                  project.progress < 30 ? 'red' : 
+                  project.progress < 70 ? 'orange' : 
+                  'green'
+                }
+                borderRadius="md"
+                mt={2}
+              />
+            )}
           </Stat>
         </GridItem>
       </Grid>

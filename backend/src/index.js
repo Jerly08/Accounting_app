@@ -22,6 +22,8 @@ const dashboardRoutes = require('./routes/dashboard');
 const wipRoutes = require('./routes/wip');
 const profitabilityRoutes = require('./routes/profitability');
 const settingsRoutes = require('./routes/settings');
+const balanceSheetRoutes = require('./routes/balanceSheet');
+const cashFlowRoutes = require('./routes/cashFlow');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -32,9 +34,13 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Konfigurasi CORS yang lebih spesifik
 const corsOptions = {
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://192.168.1.24:3000'],
+  origin: function(origin, callback) {
+    // Allow all origins during development
+    // In production, you should restrict this to specific origins
+    callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -42,6 +48,17 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// Log all incoming requests for debugging
+app.use((req, res, next) => {
+  logger.debug(`${req.method} ${req.url}`, {
+    headers: req.headers,
+    body: req.body,
+    query: req.query,
+    params: req.params
+  });
+  next();
+});
 
 // Gunakan logger berdasarkan environment
 if (NODE_ENV === 'production') {
@@ -66,6 +83,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wip', wipRoutes);
 app.use('/api/profitability', profitabilityRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/balance-sheet', balanceSheetRoutes);
+app.use('/api/cash-flow', cashFlowRoutes);
 
 // Test endpoint untuk memeriksa koneksi
 app.get('/api/health', (req, res) => {

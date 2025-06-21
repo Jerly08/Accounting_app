@@ -2,7 +2,9 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
+  "/reports/balance-sheet": "pages/reports/balance-sheet.js",
   "/": "pages/index.js",
-  "/financial/wip": "pages/financial/wip.js",
-  "/financial/fixed-assets": "pages/financial/fixed-assets.js"
+  "/reports": "pages/reports.js",
+  "/projects": "pages/projects.js",
+  "/reports/wip-report": "pages/reports/wip-report.js"
 }

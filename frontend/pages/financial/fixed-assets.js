@@ -115,7 +115,7 @@ const FixedAssetsPage = () => {
       
       // Fetch fixed assets
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/assets?${params.toString()}`,
+        `/api/assets?${params.toString()}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -174,7 +174,7 @@ const FixedAssetsPage = () => {
 
     if (window.confirm('Are you sure you want to delete this asset? This action cannot be undone.')) {
       try {
-        await axios.delete(`${process.env.NEXT_PUBLIC_API_URL}/api/assets/${assetId}`, {
+        await axios.delete(`/api/assets/${assetId}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

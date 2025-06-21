@@ -108,7 +108,7 @@ const ProjectBillingsTab = ({ projectId }) => {
       setProject(projectResponse.data.data || projectResponse.data);
       
       // Fetch project billings
-      const billingsResponse = await axios.get(`/api/projects/${projectId}/billings`, {
+      const billingsResponse = await axios.get(`/api/billings/project/${projectId}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

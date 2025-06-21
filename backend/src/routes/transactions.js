@@ -53,7 +53,7 @@ router.get('/', authenticate, async (req, res) => {
         { date: 'desc' }
       ],
       include: {
-        account: true,
+        chartofaccount: true,
         project: {
           select: {
             id: true,
@@ -123,7 +123,7 @@ router.get('/:id', authenticate, async (req, res) => {
     const transaction = await prisma.transaction.findUnique({
       where: { id: parseInt(id) },
       include: {
-        account: true,
+        chartofaccount: true,
         project: {
           select: {
             id: true,
@@ -186,7 +186,7 @@ router.get('/project/:projectId', authenticate, async (req, res) => {
         { date: 'desc' }
       ],
       include: {
-        account: true
+        chartofaccount: true
       }
     });
 
@@ -314,7 +314,7 @@ router.post('/', authenticate, async (req, res) => {
     }
 
     // Validate account exists
-    const account = await prisma.chartOfAccount.findUnique({
+    const account = await prisma.chartofaccount.findUnique({
       where: { code: accountCode }
     });
 
@@ -357,10 +357,11 @@ router.post('/', authenticate, async (req, res) => {
         accountCode,
         description,
         amount: parseFloat(amount),
-        projectId: projectId ? parseInt(projectId) : null
+        projectId: projectId ? parseInt(projectId) : null,
+        updatedAt: new Date()
       },
       include: {
-        account: true,
+        chartofaccount: true,
         project: projectId ? {
           select: {
             projectCode: true,
@@ -408,7 +409,7 @@ router.put('/:id', authenticate, async (req, res) => {
 
     // Validate account if changed
     if (accountCode) {
-      const account = await prisma.chartOfAccount.findUnique({
+      const account = await prisma.chartofaccount.findUnique({
         where: { code: accountCode }
       });
 
@@ -580,7 +581,7 @@ router.get('/export', authenticate, async (req, res) => {
           date: 'desc'
         },
         include: {
-          account: true,
+          chartofaccount: true,
           project: {
             include: {
               client: true
@@ -613,7 +614,7 @@ router.get('/export', authenticate, async (req, res) => {
     
     if (accountCode) {
       try {
-        const account = await prisma.chartOfAccount.findUnique({
+        const account = await prisma.chartofaccount.findUnique({
           where: { code: accountCode }
         });
         accountName = account?.name;

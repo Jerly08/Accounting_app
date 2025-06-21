@@ -1,9 +1,9 @@
-import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useToast } from '@chakra-ui/react';
 
-// API URL from environment variables
+// API URL from environment variables with fallback
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 // Create context
@@ -23,13 +23,17 @@ export const AuthProvider = ({ children }) => {
   const router = useRouter();
   const toast = useToast();
   
-  // Ensure baseURL is set correctly
+  // Token refresh timer
+  const tokenRefreshTimer = useRef(null);
+  
+  // Ensure baseURL is set correctly - this is crucial for fast API responses
   useEffect(() => {
     // Make sure axios baseURL is set correctly
-    if (!axios.defaults.baseURL) {
-      axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-      console.log('Axios baseURL set to:', axios.defaults.baseURL);
-    }
+    axios.defaults.baseURL = API_URL;
+    console.log('Axios baseURL set to:', axios.defaults.baseURL);
+    
+    // Set default timeout to be shorter
+    axios.defaults.timeout = 5000; // 5 seconds timeout
   }, []);
   
   // Setup axios interceptors for authentication
@@ -38,8 +42,9 @@ export const AuthProvider = ({ children }) => {
     const requestInterceptor = axios.interceptors.request.use(
       config => {
         // Add token to all requests if available
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
+        const currentToken = localStorage.getItem('token') || token;
+        if (currentToken) {
+          config.headers.Authorization = `Bearer ${currentToken}`;
         }
         return config;
       },
@@ -74,6 +79,9 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
+        console.log('Initializing authentication state...');
+        setLoading(true);
+        
         const storedToken = localStorage.getItem('token');
         const storedUser = localStorage.getItem('user');
         
@@ -82,53 +90,99 @@ export const AuthProvider = ({ children }) => {
             // Validate that the stored user data is proper JSON
             const parsedUser = JSON.parse(storedUser);
             
+            console.log('Found stored credentials, setting auth state');
+            
             // Set auth state
             setToken(storedToken);
             setUser(parsedUser);
             setIsAuthenticated(true);
             
+            // Set axios default header for all future requests
+            axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+            
             console.log("Auth initialized from localStorage successfully");
+            
+            // Verify token is still valid with a quick API call
+            try {
+              await validateToken(storedToken);
+              console.log('Token validated successfully');
+            } catch (validationError) {
+              console.error('Token validation failed:', validationError);
+              clearAuthState();
+            }
           } catch (parseError) {
             console.error("Error parsing stored user data:", parseError);
             // Clear invalid storage
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            setToken('');
-            setUser(null);
-            setIsAuthenticated(false);
+            clearAuthState();
           }
         } else {
+          console.log('No stored credentials found');
           // Clear state if tokens aren't available
-          setToken('');
-          setUser(null);
-          setIsAuthenticated(false);
+          clearAuthState();
         }
       } catch (error) {
         console.error('Error initializing auth:', error);
         // Clear potentially corrupted storage
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setToken('');
-        setUser(null);
-        setIsAuthenticated(false);
+        clearAuthState();
       } finally {
+        console.log('Auth initialization complete');
         setLoading(false);
       }
     };
     
     initializeAuth();
   }, []);
+  
+  // Helper to clear auth state
+  const clearAuthState = useCallback(() => {
+    console.log('Clearing authentication state');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken('');
+    setUser(null);
+    setIsAuthenticated(false);
+    delete axios.defaults.headers.common['Authorization'];
+    
+    // Clear any token refresh timers
+    if (tokenRefreshTimer.current) {
+      clearTimeout(tokenRefreshTimer.current);
+      tokenRefreshTimer.current = null;
+    }
+  }, []);
+  
+  // Validate token with the server
+  const validateToken = async (currentToken) => {
+    try {
+      console.log('Validating token with server...');
+      // Make a lightweight call to verify token
+      await axios.get('/api/auth/verify', {
+        headers: { Authorization: `Bearer ${currentToken}` },
+        timeout: 3000 // Short timeout for this check
+      });
+      return true;
+    } catch (error) {
+      console.error('Token validation failed:', error);
+      // If token is invalid, clear auth state
+      clearAuthState();
+      setError('Your session has expired. Please log in again.');
+      return false;
+    }
+  };
 
   // Login function
-  const login = async (username, password) => {
+  const login = useCallback(async (username, password) => {
     setLoading(true);
     try {
       console.log('Attempting login with baseURL:', axios.defaults.baseURL);
+      console.log('Login endpoint:', '/api/auth/login');
+      console.log('Login credentials:', { username, password: '******' });
+      
       const response = await axios.post('/api/auth/login', {
         username,
         password
       });
 
+      console.log('Login response:', response.status, response.statusText);
       const { token, user } = response.data;
 
       // Save to local storage
@@ -170,32 +224,42 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Register function
-  const register = async (userData) => {
+  const register = useCallback(async (userData) => {
     setLoading(true);
     try {
       console.log('Attempting registration with baseURL:', axios.defaults.baseURL);
+      console.log('Register endpoint:', '/api/auth/register');
+      console.log('Registration data:', { ...userData, password: '******' });
+      
       const response = await axios.post('/api/auth/register', userData);
-      
+
+      console.log('Registration response:', response.status, response.statusText);
       const { token, user } = response.data;
-      
-      // Save to local storage
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      
-      // Update auth state
-      setToken(token);
-      setUser(user);
-      setIsAuthenticated(true);
-      setError(null);
-      
-      // Set authorization header for future requests
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      
-      console.log('Registration successful:', user);
-      return user; // Return user for components to know registration was successful
+
+      if (token && user) {
+        // Save to local storage
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+
+        // Update auth state
+        setToken(token);
+        setUser(user);
+        setIsAuthenticated(true);
+        setError(null);
+
+        // Set authorization header for future requests
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+        console.log('Registration successful:', user);
+        return user; // Return user for components to know registration was successful
+      } else {
+        // Registration successful but no auto-login
+        console.log('Registration successful, but no auto-login token provided');
+        return response.data;
+      }
     } catch (err) {
       console.error('Registration error:', err);
       // Full error details for debugging
@@ -213,115 +277,49 @@ export const AuthProvider = ({ children }) => {
       
       const errorMessage = err.response?.data?.message || 'Registration failed. Please try again.';
       setError(errorMessage);
-      setIsAuthenticated(false);
-      setToken('');
-      setUser(null);
       throw err; // Re-throw for components to handle
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Logout function
-  const logout = () => {
-    try {
-      // Clear localStorage
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-
-      // Clear auth state
-      setToken('');
-      setUser(null);
-      setIsAuthenticated(false);
-      
-      // Clear authorization header
-      delete axios.defaults.headers.common['Authorization'];
-      
-      console.log('Logout successful');
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
-  };
+  const logout = useCallback(() => {
+    console.log('Logging out user');
+    
+    // Clear auth state
+    clearAuthState();
+    
+    // Show toast notification
+    toast({
+      title: 'Logged out',
+      description: 'You have been logged out successfully.',
+      status: 'info',
+      duration: 3000,
+      isClosable: true,
+    });
+    
+    // Redirect to login page
+    router.push('/login');
+  }, [router, toast, clearAuthState]);
 
   // Check if user has a specific role
-  const hasRole = (role) => {
-    if (!user || !user.roles) {
-      return false;
-    }
-    return user.roles.includes(role);
-  };
+  const hasRole = useCallback((role) => {
+    if (!user) return false;
+    return user.role === role || user.role === 'admin';
+  }, [user]);
 
-  // Update profile function
-  const updateProfile = async (userData) => {
-    setLoading(true);
-    try {
-      if (!token || !isAuthenticated) {
-        throw new Error('You must be logged in to update your profile');
-      }
-
-      console.log('Attempting profile update with baseURL:', axios.defaults.baseURL);
-      const response = await axios.put(
-        '/api/users/profile', 
-        userData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-      
-      const updatedUser = response.data;
-      
-      // Update localStorage
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-      
-      // Update state
-      setUser(updatedUser);
-      setError(null);
-      
-      console.log('Profile updated successfully:', updatedUser);
-      return updatedUser;
-    } catch (err) {
-      console.error('Profile update error:', err);
-      // Full error details for debugging
-      if (err.response) {
-        console.error('Error response:', {
-          data: err.response.data,
-          status: err.response.status,
-          headers: err.response.headers
-        });
-      } else if (err.request) {
-        console.error('No response received:', err.request);
-      } else {
-        console.error('Error setting up request:', err.message);
-      }
-      
-      const errorMessage = err.response?.data?.message || 'Failed to update profile. Please try again.';
-      setError(errorMessage);
-      
-      // Handle 401 errors by logging out
-      if (err.response?.status === 401) {
-        logout();
-      }
-      
-      throw err; // Re-throw for components to handle
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Context value
+  // Provide the context value
   const contextValue = {
     user,
     token,
-    loading,
     isAuthenticated,
+    loading,
     error,
     login,
-    logout,
     register,
-    updateProfile,
-    hasRole
+    logout,
+    hasRole,
   };
 
   return (

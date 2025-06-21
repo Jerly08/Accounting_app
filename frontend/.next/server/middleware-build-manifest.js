@@ -25,15 +25,20 @@ globalThis.__BUILD_MANIFEST = {
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/financial/fixed-assets": [
+    "/projects": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/financial/fixed-assets.js"
+      "static/chunks/pages/projects.js"
     ],
-    "/financial/wip": [
+    "/reports": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/financial/wip.js"
+      "static/chunks/pages/reports.js"
+    ],
+    "/reports/wip-report": [
+      "static/chunks/webpack.js",
+      "static/chunks/main.js",
+      "static/chunks/pages/reports/wip-report.js"
     ]
   },
   "ampFirstPages": []

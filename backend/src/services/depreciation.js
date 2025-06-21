@@ -46,7 +46,7 @@ const calculateStraightLineDepreciation = (asset) => {
 const updateAllAssetsDepreciation = async () => {
   try {
     // Ambil semua aset tetap
-    const assets = await prisma.fixedAsset.findMany();
+    const assets = await prisma.fixedasset.findMany();
     
     let updatedCount = 0;
     let errors = [];
@@ -57,11 +57,12 @@ const updateAllAssetsDepreciation = async () => {
         const { accumulatedDepreciation, bookValue } = calculateStraightLineDepreciation(asset);
         
         // Update aset dengan nilai penyusutan terbaru
-        await prisma.fixedAsset.update({
+        await prisma.fixedasset.update({
           where: { id: asset.id },
           data: {
             accumulatedDepreciation,
-            bookValue
+            bookValue,
+            updatedAt: new Date()
           }
         });
         
@@ -99,7 +100,7 @@ const updateAllAssetsDepreciation = async () => {
 const updateAssetDepreciation = async (assetId) => {
   try {
     // Ambil aset tetap berdasarkan ID
-    const asset = await prisma.fixedAsset.findUnique({
+    const asset = await prisma.fixedasset.findUnique({
       where: { id: parseInt(assetId) }
     });
     
@@ -114,11 +115,12 @@ const updateAssetDepreciation = async (assetId) => {
     const { accumulatedDepreciation, bookValue } = calculateStraightLineDepreciation(asset);
     
     // Update aset dengan nilai penyusutan terbaru
-    const updatedAsset = await prisma.fixedAsset.update({
+    const updatedAsset = await prisma.fixedasset.update({
       where: { id: asset.id },
       data: {
         accumulatedDepreciation,
-        bookValue
+        bookValue,
+        updatedAt: new Date()
       }
     });
     

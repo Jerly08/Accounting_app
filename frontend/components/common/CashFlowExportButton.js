@@ -74,18 +74,19 @@ const CashFlowExportButton = ({
   // Prepare data for export
   const prepareExportData = (option) => {
     // Base data preparation for export
-    const prepareActivityData = (activities, categoryName) => {
-      return activities.flatMap(category => 
-        category.transactions.map(transaction => ({
-          Category: categoryName,
-          SubCategory: category.category,
-          Date: formatDate(transaction.date),
-          Description: transaction.description,
-          Account: transaction.account,
-          Amount: transaction.amount,
-          'Amount (Formatted)': formatCurrency(transaction.amount)
-        }))
-      );
+    const prepareActivityData = (activityData, categoryName) => {
+      if (!activityData || !activityData.activities || activityData.activities.length === 0) {
+        return [];
+      }
+      
+      return activityData.activities.map(activity => ({
+        Category: categoryName,
+        Date: formatDate(activity.date),
+        Description: activity.description,
+        Account: activity.accountName || '',
+        Amount: activity.amount,
+        'Amount (Formatted)': formatCurrency(activity.amount)
+      }));
     };
 
     // Prepare summary data
@@ -93,34 +94,30 @@ const CashFlowExportButton = ({
       return [
         {
           Category: 'Summary',
-          SubCategory: 'Operating Activities',
           Date: '',
           Description: 'Total Operating Activities',
           Account: '',
-          Amount: totals.operatingTotal,
-          'Amount (Formatted)': formatCurrency(totals.operatingTotal)
+          Amount: totals.totalOperating,
+          'Amount (Formatted)': formatCurrency(totals.totalOperating)
         },
         {
           Category: 'Summary',
-          SubCategory: 'Investing Activities',
           Date: '',
           Description: 'Total Investing Activities',
           Account: '',
-          Amount: totals.investingTotal,
-          'Amount (Formatted)': formatCurrency(totals.investingTotal)
+          Amount: totals.totalInvesting,
+          'Amount (Formatted)': formatCurrency(totals.totalInvesting)
         },
         {
           Category: 'Summary',
-          SubCategory: 'Financing Activities',
           Date: '',
           Description: 'Total Financing Activities',
           Account: '',
-          Amount: totals.financingTotal,
-          'Amount (Formatted)': formatCurrency(totals.financingTotal)
+          Amount: totals.totalFinancing,
+          'Amount (Formatted)': formatCurrency(totals.totalFinancing)
         },
         {
           Category: 'Summary',
-          SubCategory: 'Net Cash Flow',
           Date: '',
           Description: 'Net Cash Flow',
           Account: '',
@@ -268,85 +265,119 @@ const CashFlowExportButton = ({
 
   // PDF export
   const exportToPdf = (data, filename, option) => {
-    // Configure PDF document
-    const orientation = 'landscape';
-    const unit = 'pt';
-    const format = 'a4';
+    // Create a new PDF document
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
     
-    const doc = new jsPDF(orientation, unit, format);
-    
-    // Add title and date range
+    // Add title
     doc.setFontSize(16);
-    const title = `Laporan Arus Kas`;
-    const subtitle = `Periode: ${formatDate(startDate)} - ${formatDate(endDate)}`;
+    doc.text('Cash Flow Report', pageWidth / 2, 20, { align: 'center' });
     
-    doc.text(title, 40, 40);
+    // Add period
     doc.setFontSize(12);
-    doc.text(subtitle, 40, 60);
+    doc.text(`Period: ${formatDate(startDate)} - ${formatDate(endDate)}`, pageWidth / 2, 30, { align: 'center' });
     
-    // Add filtering info
-    if (option !== 'all') {
-      const filterText = option === 'operating' ? 'Hanya Aktivitas Operasi' :
-                        option === 'investing' ? 'Hanya Aktivitas Investasi' :
-                        option === 'financing' ? 'Hanya Aktivitas Pendanaan' : 'Hanya Ringkasan';
-      doc.text(`Filter: ${filterText}`, 40, 80);
-    }
+    // Add current date
+    const currentDate = new Date().toLocaleDateString();
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${currentDate}`, pageWidth / 2, 40, { align: 'center' });
     
-    // Add date generated
-    const generatedDate = `Dibuat pada: ${new Date().toLocaleDateString('id-ID', { 
-      year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' 
-    })}`;
-    doc.text(generatedDate, 40, 100);
+    doc.line(20, 45, pageWidth - 20, 45);
     
-    // Prepare data for table
-    const headers = Object.keys(data[0]);
-    const rows = data.map(row => Object.values(row));
+    let yPos = 55;
     
-    // Create table
-    doc.autoTable({
-      head: [headers],
-      body: rows,
-      startY: 120,
-      styles: { overflow: 'linebreak', cellWidth: 'auto' },
-      columnStyles: { 0: { cellWidth: 'auto' } },
-      didDrawPage: (data) => {
-        // Add footer with page numbers
-        const pageSize = doc.internal.pageSize;
-        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
-        doc.text(`Halaman ${data.pageNumber}`, data.settings.margin.left, pageHeight - 10);
-      }
-    });
-    
-    // Add summary at the end
+    // Different content based on option
     if (option === 'all' || option === 'summary') {
-      doc.addPage();
-      doc.setFontSize(14);
-      doc.text('Ringkasan Arus Kas', 40, 40);
-      
       // Add summary table
+      doc.setFontSize(14);
+      doc.text('Summary', 20, yPos);
+      yPos += 10;
+      
       doc.autoTable({
-        head: [['Kategori', 'Jumlah']],
+        startY: yPos,
+        head: [['Category', 'Amount']],
         body: [
-          ['Aktivitas Operasi', formatCurrency(totals.operatingTotal)],
-          ['Aktivitas Investasi', formatCurrency(totals.investingTotal)],
-          ['Aktivitas Pendanaan', formatCurrency(totals.financingTotal)],
-          ['Arus Kas Bersih', formatCurrency(totals.netCashFlow)]
+          ['Operating Activities', formatCurrency(totals.totalOperating)],
+          ['Investing Activities', formatCurrency(totals.totalInvesting)],
+          ['Financing Activities', formatCurrency(totals.totalFinancing)],
+          ['Net Cash Flow', formatCurrency(totals.netCashFlow)]
         ],
-        startY: 60,
-        styles: { fontSize: 12 }
+        styles: { fontSize: 10, cellPadding: 5 },
+        headStyles: { fillColor: [66, 139, 202] },
+        footStyles: { fillColor: [66, 139, 202] }
       });
+      
+      yPos = doc.autoTable.previous.finalY + 15;
     }
     
-    // Save PDF
+    // Add detailed tables based on option
+    const addDetailedTable = (activities, title, startY) => {
+      if (!activities || !activities.activities || activities.activities.length === 0) {
+        return startY;
+      }
+      
+      doc.setFontSize(14);
+      doc.text(title, 20, startY);
+      startY += 10;
+      
+      const tableData = activities.activities.map(activity => [
+        formatDate(activity.date),
+        activity.description,
+        activity.accountName || '',
+        formatCurrency(activity.amount)
+      ]);
+      
+      if (tableData.length === 0) {
+        doc.setFontSize(10);
+        doc.text('No activities recorded for this period.', 20, startY);
+        return startY + 10;
+      }
+      
+      doc.autoTable({
+        startY: startY,
+        head: [['Date', 'Description', 'Account', 'Amount']],
+        body: tableData,
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [66, 139, 202] },
+        footStyles: { fillColor: [66, 139, 202] }
+      });
+      
+      return doc.autoTable.previous.finalY + 15;
+    };
+    
+    if (option === 'all' || option === 'operating') {
+      yPos = addDetailedTable(cashFlowData.operating, 'Operating Activities', yPos);
+      
+      // Add page if needed
+      if (yPos > doc.internal.pageSize.height - 50) {
+        doc.addPage();
+        yPos = 20;
+      }
+    }
+    
+    if (option === 'all' || option === 'investing') {
+      yPos = addDetailedTable(cashFlowData.investing, 'Investing Activities', yPos);
+      
+      // Add page if needed
+      if (yPos > doc.internal.pageSize.height - 50) {
+        doc.addPage();
+        yPos = 20;
+      }
+    }
+    
+    if (option === 'all' || option === 'financing') {
+      yPos = addDetailedTable(cashFlowData.financing, 'Financing Activities', yPos);
+    }
+    
+    // Save the PDF
     doc.save(filename);
     return doc;
   };
 
   // JSON export
   const exportToJson = (data, filename) => {
-    // Include metadata
     const jsonData = {
-      report: 'Cash Flow Report',
+      reportType: 'Cash Flow Report',
       period: {
         startDate,
         endDate,
@@ -354,13 +385,13 @@ const CashFlowExportButton = ({
         formattedEndDate: formatDate(endDate)
       },
       summary: {
-        operatingTotal: totals.operatingTotal,
-        investingTotal: totals.investingTotal,
-        financingTotal: totals.financingTotal,
+        totalOperating: totals.totalOperating,
+        totalInvesting: totals.totalInvesting,
+        totalFinancing: totals.totalFinancing,
         netCashFlow: totals.netCashFlow,
-        formattedOperatingTotal: formatCurrency(totals.operatingTotal),
-        formattedInvestingTotal: formatCurrency(totals.investingTotal),
-        formattedFinancingTotal: formatCurrency(totals.financingTotal),
+        formattedTotalOperating: formatCurrency(totals.totalOperating),
+        formattedTotalInvesting: formatCurrency(totals.totalInvesting),
+        formattedTotalFinancing: formatCurrency(totals.totalFinancing),
         formattedNetCashFlow: formatCurrency(totals.netCashFlow)
       },
       data
@@ -375,9 +406,26 @@ const CashFlowExportButton = ({
 
   // Get status of data categories for badge display
   const getCategoryStatus = (category) => {
-    if (category === 'operating') return cashFlowData.operating.length > 0;
-    if (category === 'investing') return cashFlowData.investing.length > 0;
-    if (category === 'financing') return cashFlowData.financing.length > 0;
+    if (!cashFlowData) return false;
+    
+    if (category === 'operating') {
+      return cashFlowData.operating && 
+             cashFlowData.operating.activities && 
+             cashFlowData.operating.activities.length > 0;
+    }
+    
+    if (category === 'investing') {
+      return cashFlowData.investing && 
+             cashFlowData.investing.activities && 
+             cashFlowData.investing.activities.length > 0;
+    }
+    
+    if (category === 'financing') {
+      return cashFlowData.financing && 
+             cashFlowData.financing.activities && 
+             cashFlowData.financing.activities.length > 0;
+    }
+    
     return true;
   };
 
