@@ -45,7 +45,7 @@ import {
   ListIcon,
 } from '@chakra-ui/react';
 import { useRouter } from 'next/router';
-import { FiArrowLeft, FiInfo } from 'react-icons/fi';
+import { FiArrowLeft, FiInfo, FiRefreshCw } from 'react-icons/fi';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/auth/ProtectedRoute';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -60,6 +60,7 @@ const WIPReportPage = () => {
   const [wipData, setWipData] = useState([]);
   const [wipSummary, setWipSummary] = useState({
     totalProjects: 0,
+    projectsWithWip: 0,
     totalCosts: 0,
     totalBilled: 0,
     totalWip: 0,
@@ -67,6 +68,7 @@ const WIPReportPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState('ongoing');
+  const [isRecalculating, setIsRecalculating] = useState(false);
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
   const cardBg = useColorModeValue('white', 'gray.700');
@@ -105,6 +107,7 @@ const WIPReportPage = () => {
       setWipData(response.data.data || []);
       setWipSummary(summaryResponse.data || {
         totalProjects: 0,
+        projectsWithWip: 0,
         totalCosts: 0,
         totalBilled: 0,
         totalWip: 0
@@ -143,6 +146,7 @@ const WIPReportPage = () => {
       setWipData(demoData);
       setWipSummary({
         totalProjects: 2,
+        projectsWithWip: 2,
         totalCosts: 105000000,
         totalBilled: 70000000,
         totalWip: 35000000
@@ -183,6 +187,68 @@ const WIPReportPage = () => {
     router.push(`/projects/${projectId}`);
   };
 
+  // Recalculate WIP for all projects
+  const recalculateAllWip = async () => {
+    try {
+      setIsRecalculating(true);
+      
+      const response = await api.post('/api/wip/recalculate-all');
+      
+      if (response.status === 200) {
+        toast({
+          title: 'WIP Recalculated',
+          description: `Successfully recalculated WIP for ${response.data.data.successCount} projects.`,
+          status: 'success',
+          duration: 5000,
+          isClosable: true,
+        });
+        
+        // Refresh WIP data
+        fetchWipData();
+      }
+    } catch (error) {
+      console.error('Error recalculating WIP:', error);
+      toast({
+        title: 'Recalculation Failed',
+        description: error.response?.data?.message || 'Failed to recalculate WIP data.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
+  // Recalculate WIP for a specific project
+  const recalculateProjectWip = async (projectId) => {
+    try {
+      const response = await api.post(`/api/wip/recalculate/${projectId}`);
+      
+      if (response.status === 200) {
+        toast({
+          title: 'WIP Recalculated',
+          description: 'Successfully recalculated WIP for the project.',
+          status: 'success',
+          duration: 3000,
+          isClosable: true,
+        });
+        
+        // Refresh WIP data
+        fetchWipData();
+      }
+    } catch (error) {
+      console.error('Error recalculating project WIP:', error);
+      toast({
+        title: 'Recalculation Failed',
+        description: error.response?.data?.message || 'Failed to recalculate project WIP data.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  };
+
   return (
     <Box p={4}>
       <Flex justify="space-between" align="center" mb={6}>
@@ -207,11 +273,21 @@ const WIPReportPage = () => {
           </Tooltip>
         </HStack>
         <HStack>
+          <Button
+            colorScheme="purple"
+            size="sm"
+            leftIcon={<FiRefreshCw />}
+            onClick={recalculateAllWip}
+            isLoading={isRecalculating}
+            loadingText="Recalculating"
+          >
+            Recalculate All
+          </Button>
           <WIPExportButton
             wipProjects={wipData}
             summary={{
               totalProjects: wipSummary.totalProjects,
-              projectsWithWip: wipSummary.totalProjects, // Menggunakan total sebagai nilai default
+              projectsWithWip: wipSummary.projectsWithWip || 0,
               totalCosts: wipSummary.totalCosts,
               totalBilled: wipSummary.totalBilled,
               totalWip: wipSummary.totalWip
@@ -250,7 +326,7 @@ const WIPReportPage = () => {
           <StatLabel>Total Projects</StatLabel>
           <StatNumber>{wipSummary.totalProjects}</StatNumber>
           <StatHelpText>
-            Projects with WIP values
+            Projects with WIP values: {wipSummary.projectsWithWip || 0}
           </StatHelpText>
         </Stat>
         
@@ -278,6 +354,19 @@ const WIPReportPage = () => {
           </StatHelpText>
         </Stat>
       </SimpleGrid>
+
+      {/* WIP Method Explanation */}
+      <Box mb={6} p={4} bg={cardBg} borderRadius="md" shadow="sm">
+        <Flex align="center" mb={2}>
+          <FiInfo size="20px" color="blue.500" />
+          <Heading size="sm" ml={2}>WIP Calculation Method</Heading>
+        </Flex>
+        <Text fontSize="sm">
+          Work In Progress (WIP) is calculated using the <strong>Earned Value Method</strong>: 
+          WIP = Earned Value - Amount Billed. Earned Value is determined by multiplying the 
+          project's percentage of completion by the total contract value.
+        </Text>
+      </Box>
 
       {error && <ErrorAlert message={error} />}
 
@@ -347,8 +436,20 @@ const WIPReportPage = () => {
                                 <List spacing={1} fontSize="sm">
                                   <ListItem>
                                     <Flex justify="space-between">
-                                      <Text>Costs to Date:</Text>
-                                      <Text fontWeight="medium">{formatCurrency(project.costs)}</Text>
+                                      <Text>Project Value:</Text>
+                                      <Text fontWeight="medium">{formatCurrency(project.totalValue)}</Text>
+                                    </Flex>
+                                  </ListItem>
+                                  <ListItem>
+                                    <Flex justify="space-between">
+                                      <Text>Completion %:</Text>
+                                      <Text fontWeight="medium">{formatPercentage(project.completionPercentage || project.progress || 0)}</Text>
+                                    </Flex>
+                                  </ListItem>
+                                  <ListItem>
+                                    <Flex justify="space-between">
+                                      <Text>Earned Value:</Text>
+                                      <Text fontWeight="medium">{formatCurrency(project.earnedValue || 0)}</Text>
                                     </Flex>
                                   </ListItem>
                                   <ListItem>
@@ -394,6 +495,15 @@ const WIPReportPage = () => {
                             onClick={() => viewProjectDetails(project.id)}
                           >
                             Details
+                          </Button>
+                          <Button
+                            size="xs"
+                            colorScheme="purple"
+                            variant="ghost"
+                            ml={2}
+                            onClick={() => recalculateProjectWip(project.id)}
+                          >
+                            Recalc
                           </Button>
                         </Td>
                       </Tr>
