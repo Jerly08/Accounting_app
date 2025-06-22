@@ -57,15 +57,7 @@ const Navbar = ({ onOpen, isMobileView, toggleMobileView }) => {
           icon={<HamburgerIcon />}
         />
 
-        <Text
-          textAlign={useBreakpointValue({ base: 'center', md: 'left' })}
-          fontFamily={'heading'}
-          color={useColorModeValue('gray.800', 'white')}
-          fontWeight="bold"
-          display={{ base: 'none', md: 'flex' }}
-        >
-          Accounting App
-        </Text>
+        <Box display={{ base: 'none', md: 'flex' }}></Box>
         
         <Flex alignItems={'center'}>
           <Stack direction={'row'} spacing={7}>
