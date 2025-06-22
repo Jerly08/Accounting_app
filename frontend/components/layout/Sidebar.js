@@ -145,9 +145,9 @@ const Sidebar = ({ isOpen, onClose, ...rest }) => {
       {...props}
     >
       <Flex h="20" alignItems="center" mx="8" justifyContent="space-between">
-        <Text fontSize="xl" fontWeight="bold" color="teal.500">
-          Accounting App
-        </Text>
+        <Box>
+          {/* Kosong, tulisan "Accounting App" dihilangkan */}
+        </Box>
         <CloseButton display={{ base: 'flex', md: 'none' }} onClick={onClose} />
       </Flex>
       <Divider />
