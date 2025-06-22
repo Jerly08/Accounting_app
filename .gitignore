@@ -1,41 +1,59 @@
-# Node modules
+# Node.js dependencies
 node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
 
 # Environment variables
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.development
+.env.test
+.env.production
 
 # Next.js build output
-.next/
-out/
+frontend/.next/
+frontend/out/
 
-# Log files
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Build files
+dist/
+build/
+*.tsbuildinfo
 
-# Editor directories and files
+# Debug logs
+logs/
+*.log
+
+# IDE files
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Prisma
+prisma/.env
+
+# Testing
+coverage/
+
+# Misc
+.cache/
+.temp/
+
+# Editor directories and files
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# OS files
-.DS_Store
-Thumbs.db
-
 # Prisma migration files
 # prisma/migrations/
 
 # Package lock files
 package-lock.json
-yarn.lock
-
-# Debug files
-*.log 
+yarn.lock 

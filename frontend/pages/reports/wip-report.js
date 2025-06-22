@@ -65,6 +65,16 @@ const WIPReportPage = () => {
     totalBilled: 0,
     totalWip: 0,
   });
+  const [wipAnalysis, setWipAnalysis] = useState({
+    byAge: [],
+    byClient: [],
+    riskAssessment: [],
+    trends: {
+      previousMonth: 0,
+      currentMonth: 0,
+      changePercentage: 0
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState('ongoing');
@@ -75,6 +85,7 @@ const WIPReportPage = () => {
 
   // Format currency
   const formatCurrency = (amount) => {
+    if (amount === undefined || amount === null) return 'Rp 0';
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
@@ -84,7 +95,69 @@ const WIPReportPage = () => {
 
   // Format percentage
   const formatPercentage = (value) => {
+    if (value === undefined || value === null) return '0.00%';
     return `${value.toFixed(2)}%`;
+  };
+
+  // Calculate WIP analysis data
+  const calculateWipAnalysis = async (summary, projects) => {
+    const totalWip = summary?.totalWip || 0;
+    
+    // For WIP by Client - Calculate from projects data
+    const byClient = Object.values(projects.reduce((acc, project) => {
+      const clientName = project.client?.name || 'Unknown';
+      if (!acc[clientName]) {
+        acc[clientName] = { name: clientName, wipValue: 0 };
+      }
+      acc[clientName].wipValue += project.wipValue || 0;
+      return acc;
+    }, {}))
+      .sort((a, b) => b.wipValue - a.wipValue)
+      .slice(0, 5)
+      .map(client => ({
+        ...client,
+        percent: totalWip > 0 ? (client.wipValue / totalWip) * 100 : 0
+      }));
+    
+    // For Risk Assessment - Default calculation
+    const riskAssessment = [
+      { level: 'Low', description: 'Expected to bill within 30 days', amount: totalWip * 0.6 },
+      { level: 'Medium', description: 'May face billing delays', amount: totalWip * 0.3 },
+      { level: 'High', description: 'At risk of non-payment', amount: totalWip * 0.1 },
+    ];
+    
+    // Default values for byAge and trends
+    let byAge = [
+      { age: '0-30 days', amount: totalWip * 0.4, percent: 40 },
+      { age: '31-60 days', amount: totalWip * 0.3, percent: 30 },
+      { age: '61-90 days', amount: totalWip * 0.2, percent: 20 },
+      { age: '90+ days', amount: totalWip * 0.1, percent: 10 },
+    ];
+    
+    let trends = {
+      previousMonth: totalWip * 0.85,
+      currentMonth: totalWip,
+      changePercentage: 15
+    };
+    
+    try {
+      // Fetch WIP by age data
+      const ageResponse = await api.get('/api/wip/analysis/by-age');
+      if (ageResponse.data && Array.isArray(ageResponse.data)) {
+        byAge = ageResponse.data;
+      }
+      
+      // Fetch WIP trends data
+      const trendsResponse = await api.get('/api/wip/analysis/trends');
+      if (trendsResponse.data && trendsResponse.data.previousMonth !== undefined) {
+        trends = trendsResponse.data;
+      }
+    } catch (error) {
+      console.error('Error fetching WIP analysis data:', error);
+      // Use default values defined above
+    }
+    
+    return { byAge, byClient, riskAssessment, trends };
   };
 
   // Fetch WIP data
@@ -104,53 +177,69 @@ const WIPReportPage = () => {
       const summaryResponse = await api.get(`/api/wip/summary`);
       
       // Update state with fetched data
-      setWipData(response.data.data || []);
-      setWipSummary(summaryResponse.data || {
+      const wipProjectsData = response.data?.data || [];
+      setWipData(wipProjectsData);
+      
+      const summaryData = summaryResponse.data || {
         totalProjects: 0,
         projectsWithWip: 0,
         totalCosts: 0,
         totalBilled: 0,
         totalWip: 0
-      });
+      };
+      setWipSummary(summaryData);
+      
+      // Calculate WIP analysis
+      const analysisData = await calculateWipAnalysis(summaryData, wipProjectsData);
+      setWipAnalysis(analysisData);
     } catch (error) {
       console.error('Error fetching WIP data:', error);
       
       setError('Failed to load WIP data. Please try again later.');
       
-      // Set default data for demo purposes
-      const demoData = [
-        {
-          id: 1,
-          name: 'Boring Project A',
-          client: { name: 'PT. Example' },
-          status: 'ongoing',
-          totalValue: 100000000,
-          costs: 60000000,
-          billed: 40000000,
-          wipValue: 20000000,
-          progress: 40
-        },
-        {
-          id: 2,
-          name: 'Sondir Project B',
-          client: { name: 'CV. Sample' },
-          status: 'ongoing',
-          totalValue: 75000000,
-          costs: 45000000,
-          billed: 30000000,
-          wipValue: 15000000,
-          progress: 40
-        }
-      ];
-      
-      setWipData(demoData);
-      setWipSummary({
-        totalProjects: 2,
-        projectsWithWip: 2,
-        totalCosts: 105000000,
-        totalBilled: 70000000,
-        totalWip: 35000000
-      });
+      // Set default data for demo purposes only in development
+      if (process.env.NODE_ENV === 'development') {
+        const demoData = [
+          {
+            id: 1,
+            name: 'Boring Project A',
+            client: { name: 'PT. Example' },
+            status: 'ongoing',
+            totalValue: 100000000,
+            costs: 60000000,
+            billed: 40000000,
+            wipValue: 20000000,
+            progress: 40
+          },
+          {
+            id: 2,
+            name: 'Sondir Project B',
+            client: { name: 'CV. Sample' },
+            status: 'ongoing',
+            totalValue: 75000000,
+            costs: 45000000,
+            billed: 30000000,
+            wipValue: 15000000,
+            progress: 40
+          }
+        ];
+        
+        setWipData(demoData);
+        
+        const demoSummary = {
+          totalProjects: 2,
+          projectsWithWip: 2,
+          totalCosts: 105000000,
+          totalBilled: 70000000,
+          totalWip: 35000000
+        };
+        
+        setWipSummary(demoSummary);
+        
+        // Calculate analysis data from demo data
+        const analysisData = await calculateWipAnalysis(demoSummary, demoData);
+        setWipAnalysis(analysisData);
+      }
     } finally {
       setLoading(false);
     }
@@ -197,7 +286,7 @@ const WIPReportPage = () => {
       if (response.status === 200) {
         toast({
           title: 'WIP Recalculated',
-          description: `Successfully recalculated WIP for ${response.data.data.successCount} projects.`,
+          description: `Successfully recalculated WIP for ${response.data?.data?.successCount || 'all'} projects.`,
           status: 'success',
           duration: 5000,
           isClosable: true,
@@ -286,11 +375,11 @@ const WIPReportPage = () => {
           <WIPExportButton
             wipProjects={wipData}
             summary={{
-              totalProjects: wipSummary.totalProjects,
-              projectsWithWip: wipSummary.projectsWithWip || 0,
-              totalCosts: wipSummary.totalCosts,
-              totalBilled: wipSummary.totalBilled,
-              totalWip: wipSummary.totalWip
+              totalProjects: wipSummary?.totalProjects || 0,
+              projectsWithWip: wipSummary?.projectsWithWip || 0,
+              totalCosts: wipSummary?.totalCosts || 0,
+              totalBilled: wipSummary?.totalBilled || 0,
+              totalWip: wipSummary?.totalWip || 0
             }}
             status={selectedStatus}
             formatCurrency={formatCurrency}
@@ -324,15 +413,15 @@ const WIPReportPage = () => {
       <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Projects</StatLabel>
-          <StatNumber>{wipSummary.totalProjects}</StatNumber>
+          <StatNumber>{wipSummary?.totalProjects || 0}</StatNumber>
           <StatHelpText>
-            Projects with WIP values: {wipSummary.projectsWithWip || 0}
+            Projects with WIP values: {wipSummary?.projectsWithWip || 0}
           </StatHelpText>
         </Stat>
         
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Costs</StatLabel>
-          <StatNumber color="red.500">{formatCurrency(wipSummary.totalCosts)}</StatNumber>
+          <StatNumber color="red.500">{formatCurrency(wipSummary?.totalCosts)}</StatNumber>
           <StatHelpText>
             Costs incurred to date
           </StatHelpText>
@@ -340,7 +429,7 @@ const WIPReportPage = () => {
         
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
           <StatLabel>Total Billed</StatLabel>
-          <StatNumber color="blue.500">{formatCurrency(wipSummary.totalBilled)}</StatNumber>
+          <StatNumber color="blue.500">{formatCurrency(wipSummary?.totalBilled)}</StatNumber>
           <StatHelpText>
             Amount billed to clients
           </StatHelpText>
@@ -348,7 +437,7 @@ const WIPReportPage = () => {
         
         <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm" borderLeft="4px solid" borderLeftColor="purple.500">
           <StatLabel>Total WIP</StatLabel>
-          <StatNumber color="purple.500">{formatCurrency(wipSummary.totalWip)}</StatNumber>
+          <StatNumber color="purple.500">{formatCurrency(wipSummary?.totalWip)}</StatNumber>
           <StatHelpText>
             Unbilled work value
           </StatHelpText>
@@ -449,7 +538,7 @@ const WIPReportPage = () => {
                                   <ListItem>
                                     <Flex justify="space-between">
                                       <Text>Earned Value:</Text>
-                                      <Text fontWeight="medium">{formatCurrency(project.earnedValue || 0)}</Text>
+                                      <Text fontWeight="medium">{formatCurrency(project.earnedValue || (project.totalValue * (project.completionPercentage || project.progress || 0) / 100))}</Text>
                                     </Flex>
                                   </ListItem>
                                   <ListItem>
@@ -531,12 +620,7 @@ const WIPReportPage = () => {
                         </Tr>
                       </Thead>
                       <Tbody>
-                        {[
-                          { age: '0-30 days', amount: wipSummary.totalWip * 0.4, percent: 40 },
-                          { age: '31-60 days', amount: wipSummary.totalWip * 0.3, percent: 30 },
-                          { age: '61-90 days', amount: wipSummary.totalWip * 0.2, percent: 20 },
-                          { age: '90+ days', amount: wipSummary.totalWip * 0.1, percent: 10 },
-                        ].map((item, index) => (
+                        {(wipAnalysis?.byAge || []).map((item, index) => (
                           <Tr key={index}>
                             <Td>{item.age}</Td>
                             <Td isNumeric>{formatCurrency(item.amount)}</Td>
@@ -559,26 +643,15 @@ const WIPReportPage = () => {
                         </Tr>
                       </Thead>
                       <Tbody>
-                        {Object.values(wipData.reduce((acc, project) => {
-                          const clientName = project.client?.name || 'Unknown';
-                          if (!acc[clientName]) {
-                            acc[clientName] = { name: clientName, wipValue: 0 };
-                          }
-                          acc[clientName].wipValue += project.wipValue;
-                          return acc;
-                        }, {}))
-                          .sort((a, b) => b.wipValue - a.wipValue)
-                          .slice(0, 5)
-                          .map((client, index) => (
-                            <Tr key={index}>
-                              <Td>{client.name}</Td>
-                              <Td isNumeric>{formatCurrency(client.wipValue)}</Td>
-                              <Td isNumeric>
-                                {formatPercentage((client.wipValue / wipSummary.totalWip) * 100)}
-                              </Td>
-                            </Tr>
-                          ))
-                        }
+                        {(wipAnalysis?.byClient || []).map((client, index) => (
+                          <Tr key={index}>
+                            <Td>{client.name}</Td>
+                            <Td isNumeric>{formatCurrency(client.wipValue)}</Td>
+                            <Td isNumeric>
+                              {formatPercentage(client.percent || 0)}
+                            </Td>
+                          </Tr>
+                        ))}
                       </Tbody>
                     </Table>
                   </Box>
@@ -595,27 +668,21 @@ const WIPReportPage = () => {
                         </Tr>
                       </Thead>
                       <Tbody>
-                        <Tr>
-                          <Td>
-                            <Badge colorScheme="green">Low</Badge>
-                          </Td>
-                          <Td>Expected to bill within 30 days</Td>
-                          <Td isNumeric>{formatCurrency(wipSummary.totalWip * 0.6)}</Td>
-                        </Tr>
-                        <Tr>
-                          <Td>
-                            <Badge colorScheme="yellow">Medium</Badge>
-                          </Td>
-                          <Td>May face billing delays</Td>
-                          <Td isNumeric>{formatCurrency(wipSummary.totalWip * 0.3)}</Td>
-                        </Tr>
-                        <Tr>
-                          <Td>
-                            <Badge colorScheme="red">High</Badge>
-                          </Td>
-                          <Td>At risk of non-payment</Td>
-                          <Td isNumeric>{formatCurrency(wipSummary.totalWip * 0.1)}</Td>
-                        </Tr>
+                        {(wipAnalysis?.riskAssessment || []).map((risk, index) => (
+                          <Tr key={index}>
+                            <Td>
+                              <Badge colorScheme={
+                                risk.level === 'Low' ? 'green' : 
+                                risk.level === 'Medium' ? 'yellow' : 
+                                risk.level === 'High' ? 'red' : 'gray'
+                              }>
+                                {risk.level}
+                              </Badge>
+                            </Td>
+                            <Td>{risk.description}</Td>
+                            <Td isNumeric>{formatCurrency(risk.amount)}</Td>
+                          </Tr>
+                        ))}
                       </Tbody>
                     </Table>
                   </Box>
@@ -626,22 +693,27 @@ const WIPReportPage = () => {
                     <Alert status="info" borderRadius="md">
                       <AlertIcon />
                       <Text fontSize="sm">
-                        WIP has increased by 15% compared to the previous month. 
-                        Consider accelerating billing cycles to improve cash flow.
+                        WIP has {wipAnalysis?.trends?.changePercentage > 0 ? 'increased' : 'decreased'} by {Math.abs(wipAnalysis?.trends?.changePercentage || 0).toFixed(1)}% compared to the previous month. 
+                        {wipAnalysis?.trends?.changePercentage > 0 
+                          ? ' Consider accelerating billing cycles to improve cash flow.'
+                          : ' Good job managing your WIP balance.'}
                       </Text>
                     </Alert>
                     <Divider my={3} />
                     <Flex justify="space-between" align="center">
                       <Text fontWeight="medium">Last Month:</Text>
-                      <Text>{formatCurrency(wipSummary.totalWip * 0.85)}</Text>
+                      <Text>{formatCurrency(wipAnalysis?.trends?.previousMonth)}</Text>
                     </Flex>
                     <Flex justify="space-between" align="center" mt={2}>
                       <Text fontWeight="medium">Current:</Text>
-                      <Text fontWeight="bold">{formatCurrency(wipSummary.totalWip)}</Text>
+                      <Text fontWeight="bold">{formatCurrency(wipAnalysis?.trends?.currentMonth)}</Text>
                     </Flex>
                     <Flex justify="space-between" align="center" mt={2}>
                       <Text fontWeight="medium">Change:</Text>
-                      <Text color="red.500">+15%</Text>
+                      <Text color={wipAnalysis?.trends?.changePercentage > 0 ? "red.500" : "green.500"}>
+                        {wipAnalysis?.trends?.changePercentage > 0 ? '+' : ''}
+                        {wipAnalysis?.trends?.changePercentage.toFixed(1)}%
+                      </Text>
                     </Flex>
                   </Box>
                 </SimpleGrid>

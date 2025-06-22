@@ -96,7 +96,7 @@ router.get('/report', authenticate, async (req, res) => {
         id: project.id,
         projectCode: project.projectCode,
         name: project.name,
-        client: project.client?.name,
+        client: project.client,
         startDate: project.startDate,
         endDate: project.endDate,
         status: project.status,

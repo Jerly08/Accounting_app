@@ -68,13 +68,6 @@ const NavItems = [
       { name: 'Financial Reports', icon: FiBarChart2, path: '/reports' }
     ]
   },
-  {
-    heading: "Settings",
-    items: [
-      { name: 'Settings', icon: FiSettings, path: '/settings' },
-      { name: 'User Management', icon: FiUsers, path: '/users', admin: true }
-    ]
-  }
 ];
 
 // Navigation item component

@@ -18,6 +18,9 @@ import {
   Text,
   Alert,
   AlertIcon,
+  AlertTitle,
+  AlertDescription,
+  Box,
 } from '@chakra-ui/react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
@@ -38,7 +41,7 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
   const [isCheckingCode, setIsCheckingCode] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const toast = useToast();
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, isAdmin } = useAuth();
 
   useEffect(() => {
     if (account) {
@@ -152,6 +155,18 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
         isClosable: true,
       });
       onClose(); // Close the modal as the user is not authenticated
+      return;
+    }
+    
+    if (!isAdmin) {
+      toast({
+        title: 'Permission Error',
+        description: 'You do not have permission to perform this action',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      onClose(); // Close the modal as the user does not have admin privileges
       return;
     }
     

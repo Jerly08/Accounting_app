@@ -50,11 +50,12 @@ const TransactionForm = ({
     date: new Date().toISOString().split('T')[0],
     type: 'expense',
     accountCode: '',
+    counterAccountCode: '',
     projectId: '',
     description: '',
     amount: '',
     notes: '',
-    createCounterTransaction: true // For automatic counter transactions
+    createCounterEntry: true // For automatic counter transactions
   };
 
   const [formData, setFormData] = useState(initialFormData);
@@ -92,11 +93,12 @@ const TransactionForm = ({
         date: formattedDate,
         type: transaction.type || 'expense',
         accountCode: transaction.accountCode || '',
+        counterAccountCode: transaction.counterAccountCode || '',
         projectId: transaction.projectId ? transaction.projectId.toString() : '',
         description: transaction.description || '',
         amount: transaction.amount ? transaction.amount.toString() : '',
         notes: transaction.notes || '',
-        createCounterTransaction: true
+        createCounterEntry: true
       });
     } else {
       setFormData(initialFormData);
@@ -116,6 +118,7 @@ const TransactionForm = ({
         ...formData, 
         [name]: value, 
         accountCode: '',
+        counterAccountCode: '',
       });
     } else {
       setFormData({ ...formData, [name]: value });
@@ -134,8 +137,14 @@ const TransactionForm = ({
 
   // Handle number input changes
   const handleNumberChange = (name, value) => {
-    // Remove non-numeric characters
-    const numericValue = value.toString().replace(/[^\d]/g, '');
+    // Remove any non-numeric characters
+    let numericValue = value.toString().replace(/[^\d]/g, '');
+    
+    // Ensure it's not empty or zero
+    if (numericValue === '' || parseInt(numericValue) === 0) {
+      numericValue = '';
+    }
+    
     setFormData({ ...formData, [name]: numericValue });
     
     // Clear error when field is edited
@@ -190,6 +199,41 @@ const TransactionForm = ({
     }
   }, [formData.accountCode, formData.type]);
 
+  // Suggest counter account when primary account changes
+  useEffect(() => {
+    const fetchSuggestedCounterAccount = async () => {
+      if (!formData.accountCode || !formData.createCounterEntry || !token || !isAuthenticated) {
+        return;
+      }
+      
+      try {
+        const response = await axios.get(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/transactions/suggest-counter/${formData.accountCode}?type=${formData.type}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        
+        if (response.data.success && response.data.data) {
+          // Only set the counter account if it's not already set
+          if (!formData.counterAccountCode) {
+            setFormData(prev => ({
+              ...prev,
+              counterAccountCode: response.data.data.accountCode
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching suggested counter account:', error);
+        // Don't show error toast as this is a background operation
+      }
+    };
+    
+    fetchSuggestedCounterAccount();
+  }, [formData.accountCode, formData.type, formData.createCounterEntry, token, isAuthenticated]);
+
   // Validate form data
   const validateForm = () => {
     const newErrors = {};
@@ -210,7 +254,7 @@ const TransactionForm = ({
       newErrors.description = 'Transaction description is required';
     }
     
-    if (!formData.amount || isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
+    if (!formData.amount || formData.amount === '0' || parseInt(formData.amount) <= 0) {
       newErrors.amount = 'Amount must be a positive number';
     }
     
@@ -255,7 +299,9 @@ const TransactionForm = ({
         description: formData.description,
         amount: parseFloat(formData.amount),
         projectId: formData.projectId ? parseInt(formData.projectId) : null,
-        notes: formData.notes || undefined
+        notes: formData.notes || undefined,
+        createCounterEntry: formData.createCounterEntry,
+        counterAccountCode: formData.counterAccountCode || undefined
       };
       
       let response;
@@ -295,7 +341,9 @@ const TransactionForm = ({
         
         toast({
           title: 'Success',
-          description: 'Transaction successfully created',
+          description: formData.createCounterEntry 
+            ? 'Double-entry transaction successfully created' 
+            : 'Transaction successfully created',
           status: 'success',
           duration: 3000,
           isClosable: true,
@@ -403,162 +451,155 @@ const TransactionForm = ({
                   </Radio>
                 </Stack>
               </RadioGroup>
-              <FormErrorMessage>{errors.type}</FormErrorMessage>
+              {errors.type && <FormErrorMessage>{errors.type}</FormErrorMessage>}
             </FormControl>
             
+            {/* Date Selection */}
             <FormControl isRequired isInvalid={!!errors.date}>
-              <FormLabel>Date</FormLabel>
+              <FormLabel>Transaction Date</FormLabel>
               <Input
                 type="date"
                 name="date"
                 value={formData.date}
                 onChange={handleChange}
               />
-              <FormErrorMessage>{errors.date}</FormErrorMessage>
+              {errors.date && <FormErrorMessage>{errors.date}</FormErrorMessage>}
             </FormControl>
             
+            {/* Account Selection */}
             <FormControl isRequired isInvalid={!!errors.accountCode}>
               <FormLabel>Account</FormLabel>
               <Select
                 name="accountCode"
+                placeholder="Select account"
                 value={formData.accountCode}
                 onChange={handleChange}
-                placeholder="Select account"
               >
                 {renderAccountOptions()}
               </Select>
-              <FormErrorMessage>{errors.accountCode}</FormErrorMessage>
-            </FormControl>
-            
-            <FormControl isInvalid={!!errors.projectId}>
-              <FormLabel>Project (Optional)</FormLabel>
-              <Select
-                name="projectId"
-                value={formData.projectId || ''}
-                onChange={handleChange}
-                placeholder="Select project"
-              >
-                <option value="">No Project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id.toString()}>
-                    {project.projectCode} - {project.name}
-                  </option>
-                ))}
-              </Select>
-              <FormErrorMessage>{errors.projectId}</FormErrorMessage>
+              {errors.accountCode && <FormErrorMessage>{errors.accountCode}</FormErrorMessage>}
               <FormHelperText>
-                Link this transaction to a specific project
+                Select the account for this transaction
               </FormHelperText>
             </FormControl>
             
-            <FormControl isRequired isInvalid={!!errors.description}>
-              <FormLabel>Description</FormLabel>
-              <Input
-                name="description"
-                value={formData.description}
-                onChange={handleChange}
-                placeholder="Enter transaction description"
-              />
-              <FormErrorMessage>{errors.description}</FormErrorMessage>
-            </FormControl>
-            
-            <FormControl isRequired isInvalid={!!errors.amount}>
-              <FormLabel>Amount</FormLabel>
-              <InputGroup>
-                <InputLeftAddon>Rp</InputLeftAddon>
-                <NumberInput
-                  min={0}
-                  value={formData.amount}
-                  onChange={(valueString) => handleNumberChange('amount', valueString)}
-                  width="100%"
-                >
-                  <NumberInputField
-                    name="amount"
-                    placeholder="Enter amount"
-                    borderLeftRadius={0}
-                  />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </InputGroup>
-              <FormHelperText>
-                {formData.amount ? formatCurrency(formData.amount) : ''}
-              </FormHelperText>
-              <FormErrorMessage>{errors.amount}</FormErrorMessage>
-            </FormControl>
-            
+            {/* Double Entry Option */}
             <FormControl>
-              <FormLabel>Notes (Optional)</FormLabel>
-              <Textarea
-                name="notes"
-                value={formData.notes || ''}
-                onChange={handleChange}
-                placeholder="Enter additional notes (optional)"
-                rows={3}
-              />
+              <FormLabel>Double-Entry Accounting</FormLabel>
+              <RadioGroup 
+                value={formData.createCounterEntry.toString()} 
+                onChange={(value) => handleRadioChange('createCounterEntry', value)}
+              >
+                <Stack direction="row" spacing={5}>
+                  <Radio value="true">
+                    <Badge colorScheme="blue" px={2} py={1}>Enable</Badge>
+                  </Radio>
+                  <Radio value="false">
+                    <Badge colorScheme="gray" px={2} py={1}>Disable</Badge>
+                  </Radio>
+                </Stack>
+              </RadioGroup>
+              <FormHelperText>
+                Enable to automatically create counter-entry for proper double-entry accounting
+              </FormHelperText>
             </FormControl>
             
-            {!transaction && (
-              <FormControl>
-                <FormLabel>Create Balancing Transaction</FormLabel>
-                <RadioGroup 
-                  value={formData.createCounterTransaction.toString()} 
-                  onChange={(value) => handleRadioChange('createCounterTransaction', value)}
+            {/* Counter Account Selection - Only shown when double entry is enabled */}
+            {formData.createCounterEntry && (
+              <FormControl isInvalid={!!errors.counterAccountCode}>
+                <FormLabel>Counter Account (Optional)</FormLabel>
+                <Select
+                  name="counterAccountCode"
+                  placeholder="Select counter account (auto-suggested if empty)"
+                  value={formData.counterAccountCode}
+                  onChange={handleChange}
                 >
-                  <Stack direction="row" spacing={5}>
-                    <Radio value="true">Yes</Radio>
-                    <Radio value="false">No</Radio>
-                  </Stack>
-                </RadioGroup>
+                  {accounts.map((account) => (
+                    <option key={account.code} value={account.code}>
+                      {account.code} - {account.name}
+                    </option>
+                  ))}
+                </Select>
+                {errors.counterAccountCode && <FormErrorMessage>{errors.counterAccountCode}</FormErrorMessage>}
                 <FormHelperText>
-                  {formData.type === 'income' 
-                    ? 'Automatically create corresponding income transaction' 
-                    : 'Automatically create corresponding expense transaction'}
+                  Select the counter account for double-entry (will be auto-suggested if left empty)
                 </FormHelperText>
               </FormControl>
             )}
             
-            {formData.createCounterTransaction && (
-              <Alert status="info" borderRadius="md">
-                <AlertIcon />
-                <Text fontSize="sm">
-                  {formData.type === 'income' 
-                    ? 'Income transaction will be automatically created to balance this transaction.' 
-                    : 'Expense transaction will be automatically created to balance this transaction.'}
-                </Text>
-              </Alert>
-            )}
+            {/* Project Selection */}
+            <FormControl isInvalid={!!errors.projectId}>
+              <FormLabel>Project (Optional)</FormLabel>
+              <Select
+                name="projectId"
+                placeholder="Select project"
+                value={formData.projectId}
+                onChange={handleChange}
+              >
+                <option value="">No Project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.projectCode} - {project.name}
+                  </option>
+                ))}
+              </Select>
+              {errors.projectId && <FormErrorMessage>{errors.projectId}</FormErrorMessage>}
+            </FormControl>
+            
+            {/* Description */}
+            <FormControl isRequired isInvalid={!!errors.description}>
+              <FormLabel>Description</FormLabel>
+              <Input
+                name="description"
+                placeholder="Transaction description"
+                value={formData.description}
+                onChange={handleChange}
+              />
+              {errors.description && <FormErrorMessage>{errors.description}</FormErrorMessage>}
+            </FormControl>
+            
+            {/* Amount */}
+            <FormControl isRequired isInvalid={!!errors.amount}>
+              <FormLabel>Amount</FormLabel>
+              <InputGroup>
+                <InputLeftAddon>Rp</InputLeftAddon>
+                <Input
+                  name="amount"
+                  placeholder="0"
+                  value={formData.amount ? formData.amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") : ''}
+                  onChange={(e) => handleNumberChange('amount', e.target.value)}
+                  borderLeftRadius={0}
+                />
+              </InputGroup>
+              {errors.amount && <FormErrorMessage>{errors.amount}</FormErrorMessage>}
+              <FormHelperText>Enter amount without decimal points</FormHelperText>
+            </FormControl>
+            
+            {/* Notes */}
+            <FormControl isInvalid={!!errors.notes}>
+              <FormLabel>Notes (Optional)</FormLabel>
+              <Textarea
+                name="notes"
+                placeholder="Additional notes"
+                value={formData.notes}
+                onChange={handleChange}
+              />
+              {errors.notes && <FormErrorMessage>{errors.notes}</FormErrorMessage>}
+            </FormControl>
           </VStack>
         </ModalBody>
         
         <ModalFooter>
-          <Button variant="outline" mr={3} onClick={onClose}>
+          <Button variant="ghost" mr={3} onClick={onClose}>
             Cancel
           </Button>
-          {!transaction && (
-            <Button 
-              variant="outline" 
-              colorScheme="gray" 
-              mr={3} 
-              onClick={() => setFormData({
-                ...initialFormData,
-                type: formData.type,
-                projectId: formData.projectId
-              })}
-              isDisabled={isSubmitting}
-            >
-              Reset
-            </Button>
-          )}
-          <Button
-            colorScheme="blue"
-            onClick={handleSubmit}
+          <Button 
+            colorScheme="blue" 
+            onClick={handleSubmit} 
             isLoading={isSubmitting}
-            loadingText="Saving..."
+            loadingText="Submitting"
           >
-            {transaction ? 'Update' : 'Save'}
+            {transaction ? 'Update' : 'Create'}
           </Button>
         </ModalFooter>
       </ModalContent>

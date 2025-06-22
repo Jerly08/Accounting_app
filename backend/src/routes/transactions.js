@@ -303,7 +303,17 @@ router.get('/account/:accountCode', authenticate, async (req, res) => {
  */
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { date, type, accountCode, description, amount, projectId } = req.body;
+    const { 
+      date, 
+      type, 
+      accountCode, 
+      description, 
+      amount, 
+      projectId, 
+      notes,
+      counterAccountCode, 
+      createCounterEntry = true 
+    } = req.body;
     
     // Validate required fields
     if (!date || !type || !accountCode || !description || !amount) {
@@ -349,33 +359,108 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // Create transaction
-    const transaction = await prisma.transaction.create({
-      data: {
-        date: new Date(date),
+    // Import double entry service
+    const doubleEntryService = require('../services/doubleEntryService');
+
+    // If double-entry accounting is enabled
+    if (createCounterEntry) {
+      // Validate counter account if provided
+      if (counterAccountCode) {
+        const counterAccount = await prisma.chartofaccount.findUnique({
+          where: { code: counterAccountCode }
+        });
+
+        if (!counterAccount) {
+          return res.status(404).json({
+            success: false,
+            message: 'Akun lawan tidak ditemukan'
+          });
+        }
+      } else {
+        // Auto-suggest counter account if not provided
+        try {
+          const suggestedCounterCode = await doubleEntryService.suggestCounterAccount(accountCode, type);
+          counterAccountCode = suggestedCounterCode;
+        } catch (error) {
+          console.error('Error suggesting counter account:', error);
+          return res.status(500).json({
+            success: false,
+            message: 'Gagal menyarankan akun lawan',
+            error: error.message
+          });
+        }
+      }
+
+      // Create primary transaction data
+      const primaryTransaction = {
+        date,
         type,
         accountCode,
         description,
         amount: parseFloat(amount),
         projectId: projectId ? parseInt(projectId) : null,
-        updatedAt: new Date()
-      },
-      include: {
-        chartofaccount: true,
-        project: projectId ? {
-          select: {
-            projectCode: true,
-            name: true
-          }
-        } : undefined
-      }
-    });
+        notes
+      };
 
-    res.status(201).json({
-      success: true,
-      message: 'Transaksi berhasil ditambahkan',
-      data: transaction
-    });
+      try {
+        // Generate counter transaction
+        const counterTransaction = await doubleEntryService.generateCounterTransaction(
+          primaryTransaction, 
+          counterAccountCode
+        );
+
+        // Create both transactions in a single database transaction
+        const result = await doubleEntryService.createDoubleEntryTransaction(
+          primaryTransaction,
+          counterTransaction
+        );
+
+        return res.status(201).json({
+          success: true,
+          message: 'Transaksi ganda berhasil ditambahkan',
+          data: {
+            primary: result.primary,
+            counter: result.counter
+          }
+        });
+      } catch (error) {
+        console.error('Error creating double-entry transaction:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Gagal menambahkan transaksi ganda',
+          error: error.message
+        });
+      }
+    } else {
+      // Create single transaction (legacy mode)
+      const transaction = await prisma.transaction.create({
+        data: {
+          date: new Date(date),
+          type,
+          accountCode,
+          description,
+          amount: parseFloat(amount),
+          projectId: projectId ? parseInt(projectId) : null,
+          notes: notes || undefined,
+          updatedAt: new Date()
+        },
+        include: {
+          chartofaccount: true,
+          project: projectId ? {
+            select: {
+              projectCode: true,
+              name: true
+            }
+          } : undefined
+        }
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Transaksi berhasil ditambahkan',
+        data: transaction
+      });
+    }
   } catch (error) {
     res.status(500).json({ 
       success: false, 
@@ -692,6 +777,73 @@ router.get('/export', authenticate, async (req, res) => {
     return res.status(500).json({ 
       success: false, 
       message: 'Unexpected error during export',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/transactions/suggest-counter/:accountCode
+ * @desc    Suggest counter account for double-entry accounting
+ * @access  Private
+ */
+router.get('/suggest-counter/:accountCode', authenticate, async (req, res) => {
+  try {
+    const { accountCode } = req.params;
+    const { type } = req.query;
+
+    if (!accountCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account code is required'
+      });
+    }
+
+    if (!type || !['income', 'expense'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid transaction type (income/expense) is required'
+      });
+    }
+
+    // Import double entry service
+    const doubleEntryService = require('../services/doubleEntryService');
+
+    try {
+      const suggestedAccountCode = await doubleEntryService.suggestCounterAccount(accountCode, type);
+      
+      // Get account details
+      const account = await prisma.chartofaccount.findUnique({
+        where: { code: suggestedAccountCode }
+      });
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Suggested account not found'
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          accountCode: account.code,
+          name: account.name,
+          type: account.type
+        }
+      });
+    } catch (error) {
+      console.error('Error suggesting counter account:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to suggest counter account',
+        error: error.message
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat menyarankan akun lawan',
       error: error.message 
     });
   }

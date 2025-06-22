@@ -19,6 +19,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState(null);
   const router = useRouter();
   const toast = useToast();
@@ -96,6 +97,7 @@ export const AuthProvider = ({ children }) => {
             setToken(storedToken);
             setUser(parsedUser);
             setIsAuthenticated(true);
+            setIsAdmin(parsedUser.role === 'admin');
             
             // Set axios default header for all future requests
             axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
@@ -141,6 +143,7 @@ export const AuthProvider = ({ children }) => {
     setToken('');
     setUser(null);
     setIsAuthenticated(false);
+    setIsAdmin(false);
     delete axios.defaults.headers.common['Authorization'];
     
     // Clear any token refresh timers
@@ -193,6 +196,7 @@ export const AuthProvider = ({ children }) => {
       setToken(token);
       setUser(user);
       setIsAuthenticated(true);
+      setIsAdmin(user.role === 'admin');
       setError(null);
 
       // Set authorization header for future requests
@@ -248,6 +252,7 @@ export const AuthProvider = ({ children }) => {
         setToken(token);
         setUser(user);
         setIsAuthenticated(true);
+        setIsAdmin(user.role === 'admin');
         setError(null);
 
         // Set authorization header for future requests
@@ -314,12 +319,14 @@ export const AuthProvider = ({ children }) => {
     user,
     token,
     isAuthenticated,
+    isAdmin,
     loading,
     error,
     login,
-    register,
     logout,
-    hasRole,
+    register,
+    validateToken,
+    clearAuthState
   };
 
   return (

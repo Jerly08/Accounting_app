@@ -24,6 +24,8 @@ import {
   AlertIcon,
   Badge,
   useToast,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react';
 import { 
   FiPlus, 
@@ -61,7 +63,7 @@ const AccountsPage = () => {
   const [fetchAttempts, setFetchAttempts] = useState(0);
   const toast = useToast();
   const router = useRouter();
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, isAdmin } = useAuth();
 
   const fetchAccounts = async () => {
     // Don't attempt to fetch if no token available
@@ -144,6 +146,17 @@ const AccountsPage = () => {
   }, [token, isAuthenticated]);
 
   const handleEdit = (account) => {
+    if (!isAdmin) {
+      toast({
+        title: 'Permission Error',
+        description: 'You do not have permission to edit accounts.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
     setSelectedAccount(account);
     onOpen();
   };
@@ -153,6 +166,17 @@ const AccountsPage = () => {
       toast({
         title: 'Authentication Error',
         description: 'You need to be logged in to perform this action.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (!isAdmin) {
+      toast({
+        title: 'Permission Error',
+        description: 'You do not have permission to delete accounts.',
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -202,6 +226,17 @@ const AccountsPage = () => {
   };
 
   const addNewAccount = () => {
+    if (!isAdmin) {
+      toast({
+        title: 'Permission Error',
+        description: 'You do not have permission to add accounts.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
     setSelectedAccount(null);
     onOpen();
   };
@@ -233,14 +268,28 @@ const AccountsPage = () => {
         <Heading as="h1" size="lg">
           Chart of Accounts
         </Heading>
-        <Button 
-          leftIcon={<FiPlus />} 
-          colorScheme="teal" 
-          onClick={addNewAccount}
-        >
-          Add New Account
-        </Button>
+        {isAdmin && (
+          <Button 
+            leftIcon={<FiPlus />} 
+            colorScheme="teal" 
+            onClick={addNewAccount}
+          >
+            Add New Account
+          </Button>
+        )}
       </Flex>
+
+      {!isAdmin && (
+        <Alert status="info" mb={6}>
+          <AlertIcon />
+          <Box>
+            <AlertTitle>Limited Access</AlertTitle>
+            <AlertDescription>
+              You are viewing the chart of accounts in read-only mode. Admin privileges are required to add, edit, or delete accounts.
+            </AlertDescription>
+          </Box>
+        </Alert>
+      )}
 
       <Flex mb={6} direction={{ base: 'column', md: 'row' }} gap={4}>
         <InputGroup flex="2">
@@ -296,22 +345,26 @@ const AccountsPage = () => {
                     </Badge>
                   </Td>
                   <Td>
-                    <HStack spacing={2}>
-                      <IconButton
-                        aria-label="Edit account"
-                        icon={<FiEdit />}
-                        size="sm"
-                        colorScheme="blue"
-                        onClick={() => handleEdit(account)}
-                      />
-                      <IconButton
-                        aria-label="Delete account"
-                        icon={<FiTrash2 />}
-                        size="sm"
-                        colorScheme="red"
-                        onClick={() => handleDelete(account.code)}
-                      />
-                    </HStack>
+                    {isAdmin ? (
+                      <HStack spacing={2}>
+                        <IconButton
+                          aria-label="Edit account"
+                          icon={<FiEdit />}
+                          size="sm"
+                          colorScheme="blue"
+                          onClick={() => handleEdit(account)}
+                        />
+                        <IconButton
+                          aria-label="Delete account"
+                          icon={<FiTrash2 />}
+                          size="sm"
+                          colorScheme="red"
+                          onClick={() => handleDelete(account.code)}
+                        />
+                      </HStack>
+                    ) : (
+                      <Text fontSize="sm" color="gray.500">No actions available</Text>
+                    )}
                   </Td>
                 </Tr>
               ))}

@@ -178,6 +178,39 @@ router.post('/', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
+    // Map account type to cashflow category
+    let category = 'Other';
+    switch(type) {
+      case 'Pendapatan':
+        category = 'Income';
+        break;
+      case 'Beban':
+        category = 'Expense';
+        break;
+      case 'Aktiva':
+        category = 'Asset';
+        break;
+      case 'Aset Tetap':
+        category = 'Fixed Asset';
+        break;
+      case 'Kontra Aset':
+        category = 'Contra Asset';
+        break;
+      default:
+        category = 'Other';
+    }
+
+    // Create cashflow category entry first
+    await prisma.cashflow_category.create({
+      data: {
+        accountCode: code,
+        category: category,
+        subcategory: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+
     // Create account
     const account = await prisma.chartofaccount.create({
       data: {
@@ -233,6 +266,57 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
         message: 'Tipe akun tidak valid',
         validTypes
       });
+    }
+
+    // Map account type to cashflow category if type is changing
+    if (type && type !== existingAccount.type) {
+      let category = 'Other';
+      switch(type) {
+        case 'Pendapatan':
+          category = 'Income';
+          break;
+        case 'Beban':
+          category = 'Expense';
+          break;
+        case 'Aktiva':
+          category = 'Asset';
+          break;
+        case 'Aset Tetap':
+          category = 'Fixed Asset';
+          break;
+        case 'Kontra Aset':
+          category = 'Contra Asset';
+          break;
+        default:
+          category = 'Other';
+      }
+      
+      // Check if cashflow_category entry exists
+      const existingCategory = await prisma.cashflow_category.findUnique({
+        where: { accountCode: code }
+      });
+      
+      if (existingCategory) {
+        // Update existing cashflow category
+        await prisma.cashflow_category.update({
+          where: { accountCode: code },
+          data: {
+            category: category,
+            updatedAt: new Date()
+          }
+        });
+      } else {
+        // Create new cashflow category entry if it doesn't exist
+        await prisma.cashflow_category.create({
+          data: {
+            accountCode: code,
+            category: category,
+            subcategory: null,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
+        });
+      }
     }
 
     // Update account
@@ -291,6 +375,17 @@ router.delete('/:code', authenticate, authorize(['admin']), async (req, res) => 
       return res.status(400).json({
         success: false,
         message: 'Tidak dapat menghapus akun yang memiliki transaksi'
+      });
+    }
+
+    // Delete corresponding cashflow_category entry if it exists
+    const existingCategory = await prisma.cashflow_category.findUnique({
+      where: { accountCode: code }
+    });
+    
+    if (existingCategory) {
+      await prisma.cashflow_category.delete({
+        where: { accountCode: code }
       });
     }
 

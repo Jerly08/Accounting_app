@@ -203,8 +203,9 @@ const getProfitabilitySummary = async () => {
     // Ambil semua proyek dengan costs dan billings
     const projects = await prisma.project.findMany({
       include: {
-        projectcosts: true,
-        billings: true
+        projectcost: true,
+        billing: true,
+        transaction: true
       }
     });
     
@@ -216,20 +217,20 @@ const getProfitabilitySummary = async () => {
     let profitableProjects = 0;
     
     projects.forEach(project => {
-      const { totalCosts: costs, totalBilled: billed, isProfitable } = calculateProjectProfitability(project);
+      const profitabilityMetrics = calculateProjectProfitability(project);
       
-      totalCosts += costs;
-      totalBilled += billed;
+      totalCosts += profitabilityMetrics.totalCosts;
+      totalBilled += profitabilityMetrics.totalBilled;
       totalValue += parseFloat(project.totalValue || 0);
       
-      if (isProfitable) {
+      if (profitabilityMetrics.isProfitable) {
         profitableProjects++;
       }
     });
     
     // Hitung metrik ringkasan
     const totalProfit = totalBilled - totalCosts;
-    const overallProfitMargin = totalBilled > 0 ? (totalProfit / totalBilled) * 100 : 0;
+    const overallProfitMargin = totalValue > 0 ? (totalProfit / totalValue) * 100 : 0;
     const profitablePercentage = totalProjects > 0 ? (profitableProjects / totalProjects) * 100 : 0;
     
     return {

@@ -150,3 +150,95 @@ Aplikasi menggunakan beberapa model data utama:
 - [Fitur Transaksi Keuangan](docs/FINANCIAL-TRANSACTIONS.md)
 - [Fitur Export](docs/EXPORT_FEATURES.md)
 
+# Accounting Application
+
+This is an accounting application that provides various financial management tools including Work In Progress (WIP) reporting.
+
+## Setup Instructions
+
+### Prerequisites
+- Node.js (v16 or later)
+- npm or yarn
+
+### Backend Setup
+1. Navigate to the backend directory:
+```bash
+cd backend
+```
+
+2. Install dependencies:
+```bash
+npm install
+# or
+yarn install
+```
+
+3. Set up environment variables:
+   - Create a `.env` file based on `.env.example`
+   - Configure database connection settings
+
+4. Start the backend server:
+```bash
+npm run dev
+# or
+yarn dev
+```
+
+The backend should now be running on http://localhost:5000
+
+### Frontend Setup
+1. Navigate to the frontend directory:
+```bash
+cd frontend
+```
+
+2. Install dependencies:
+```bash
+npm install
+# or
+yarn install
+```
+
+3. Start the frontend development server:
+```bash
+npm run dev
+# or
+yarn dev
+```
+
+The frontend should now be running on http://localhost:3000
+
+## Features
+
+### Work In Progress (WIP) Reporting
+
+The WIP reporting feature allows you to:
+- View all current Work In Progress across your projects
+- Filter projects by status (ongoing, completed, cancelled)
+- View detailed WIP analysis including:
+  - WIP by age
+  - WIP by client
+  - Risk assessment
+  - Trend analysis
+- Export reports in various formats (Excel, CSV, PDF, JSON)
+- Recalculate WIP for individual projects or all projects
+
+To access the WIP report:
+1. Log in to the application
+2. Navigate to Reports > WIP Report
+3. Or go directly to: http://localhost:3000/reports/wip-report
+
+## WIP Calculation Method
+
+Work In Progress (WIP) is calculated using the Earned Value Method:
+- WIP = Earned Value - Amount Billed
+- Earned Value = Project Value × Completion Percentage
+
+This method provides an accurate representation of unbilled work value for financial reporting.
+
+## Troubleshooting
+
+- If you experience issues with WIP calculation, use the "Recalculate" button to refresh the data
+- Ensure your project progress values are up-to-date for accurate WIP calculations
+- For any API connection issues, verify that both frontend and backend are running properly
+

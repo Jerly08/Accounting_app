@@ -178,7 +178,7 @@ const generateBalanceSheet = async (date) => {
         };
       });
     
-    // 8. Group accounts by standardized type
+    // 8. Group accounts by standardized type and current/non-current status
     // Filter out fixed asset accounts (15xx) to avoid duplication with fixedasset table
     // Also filter out WIP account (1301) to avoid duplication with calculated WIP
     // Also filter out contra asset accounts (16xx) to handle them separately
@@ -199,18 +199,49 @@ const generateBalanceSheet = async (date) => {
       (sum, account) => sum + account.balance, 0
     );
     
-    const assets = assetAccountsWithoutFixedAssetsAndWIP.reduce((acc, asset) => {
-      const category = asset.category || 'Other Assets';
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(asset);
-      return acc;
-    }, {});
+    // Group assets by current/non-current and then by category/subcategory
+    const currentAssets = assetAccountsWithoutFixedAssetsAndWIP
+      .filter(asset => asset.isCurrentAsset === true || asset.isCurrentAsset === null)
+      .reduce((acc, asset) => {
+        const category = asset.category || 'Other Current Assets';
+        const subcategory = asset.subcategory || 'General';
+        
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        
+        if (!acc[category][subcategory]) {
+          acc[category][subcategory] = [];
+        }
+        
+        acc[category][subcategory].push(asset);
+        return acc;
+      }, {});
+    
+    const nonCurrentAssets = assetAccountsWithoutFixedAssetsAndWIP
+      .filter(asset => asset.isCurrentAsset === false)
+      .reduce((acc, asset) => {
+        const category = asset.category || 'Other Non-Current Assets';
+        const subcategory = asset.subcategory || 'General';
+        
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        
+        if (!acc[category][subcategory]) {
+          acc[category][subcategory] = [];
+        }
+        
+        acc[category][subcategory].push(asset);
+        return acc;
+      }, {});
     
     // Add contra assets to the assets object
     if (contraAssetAccounts.length > 0) {
-      assets['Accumulated Depreciation'] = contraAssetAccounts;
+      if (!nonCurrentAssets['Accumulated Depreciation']) {
+        nonCurrentAssets['Accumulated Depreciation'] = {};
+      }
+      nonCurrentAssets['Accumulated Depreciation']['General'] = contraAssetAccounts;
     }
     
     // Add negative WIP as a liability (Advance from customers)
@@ -225,29 +256,67 @@ const generateBalanceSheet = async (date) => {
         type: 'Kewajiban',
         standardType: 'liability',
         category: 'Current Liabilities',
+        subcategory: 'Customer Advances',
+        isCurrentLiability: true,
         balance: totalNegativeWIP
       });
     }
     
-    const liabilities = liabilityAccounts.reduce((acc, liability) => {
-      const category = liability.category || 'Other Liabilities';
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(liability);
-      return acc;
-    }, {});
+    // Group liabilities by current/non-current and then by category/subcategory
+    const currentLiabilities = liabilityAccounts
+      .filter(liability => liability.isCurrentLiability === true || liability.isCurrentLiability === null)
+      .reduce((acc, liability) => {
+        const category = liability.category || 'Other Current Liabilities';
+        const subcategory = liability.subcategory || 'General';
+        
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        
+        if (!acc[category][subcategory]) {
+          acc[category][subcategory] = [];
+        }
+        
+        acc[category][subcategory].push(liability);
+        return acc;
+      }, {});
     
-    // Filter equity accounts by standardized type
-    const equity = Object.values(accountBalances)
-      .filter(account => account.standardType === 'equity');
+    const nonCurrentLiabilities = liabilityAccounts
+      .filter(liability => liability.isCurrentLiability === false)
+      .reduce((acc, liability) => {
+        const category = liability.category || 'Other Non-Current Liabilities';
+        const subcategory = liability.subcategory || 'General';
+        
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        
+        if (!acc[category][subcategory]) {
+          acc[category][subcategory] = [];
+        }
+        
+        acc[category][subcategory].push(liability);
+        return acc;
+      }, {});
     
-    // Get revenue and expense accounts for net income calculation
-    const revenue = Object.values(accountBalances)
-      .filter(account => account.standardType === 'revenue');
-    
-    const expense = Object.values(accountBalances)
-      .filter(account => account.standardType === 'expense');
+    // Group equity accounts by category/subcategory
+    const equityByCategory = Object.values(accountBalances)
+      .filter(account => account.standardType === 'equity')
+      .reduce((acc, equity) => {
+        const category = equity.category || 'Equity';
+        const subcategory = equity.subcategory || 'General';
+        
+        if (!acc[category]) {
+          acc[category] = {};
+        }
+        
+        if (!acc[category][subcategory]) {
+          acc[category][subcategory] = [];
+        }
+        
+        acc[category][subcategory].push(equity);
+        return acc;
+      }, {});
     
     // 9. Calculate totals
     const totalAccountAssets = assetAccountsWithoutFixedAssetsAndWIP.reduce(
@@ -260,11 +329,20 @@ const generateBalanceSheet = async (date) => {
     );
     
     // Calculate total equity
-    const totalEquity = equity.reduce((sum, eq) => sum + eq.balance, 0);
+    const totalEquity = Object.keys(equityByCategory).reduce((sum, categoryKey) => {
+      const category = equityByCategory[categoryKey];
+      return sum + Object.values(category).reduce((catSum, subcategory) => {
+        return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
+      }, 0);
+    }, 0);
     
     // Calculate net income (revenue - expense) and add to equity
-    const totalRevenue = revenue.reduce((sum, rev) => sum + rev.balance, 0);
-    const totalExpense = expense.reduce((sum, exp) => sum + exp.balance, 0);
+    const totalRevenue = Object.values(accountBalances)
+      .filter(account => account.standardType === 'revenue')
+      .reduce((sum, rev) => sum + rev.balance, 0);
+    const totalExpense = Object.values(accountBalances)
+      .filter(account => account.standardType === 'expense')
+      .reduce((sum, exp) => sum + exp.balance, 0);
     const netIncome = totalRevenue - totalExpense;
     
     // Add WIP and Fixed Assets to total assets, and include contra assets
@@ -276,15 +354,13 @@ const generateBalanceSheet = async (date) => {
     // Calculate total liabilities and equity
     const totalLiabilitiesAndEquity = totalLiabilities + totalEquityWithIncome;
     
-    // Force balance sheet to be balanced
-    const adjustedTotalFixedAssets = totalFixedAssets + (totalLiabilitiesAndEquity - totalAssets);
-    const adjustedTotalAssets = totalAccountAssets + adjustedTotalFixedAssets + totalWIP + totalContraAssets;
+    // Calculate difference for debugging
+    const difference = totalAssets - totalLiabilitiesAndEquity;
     
     // Calculate debug information internally but don't include in response
     const debugInfo = {
       totalAccountAssets,
       totalFixedAssets,
-      adjustedTotalFixedAssets,
       totalWIP,
       totalContraAssets,
       totalLiabilities,
@@ -292,8 +368,7 @@ const generateBalanceSheet = async (date) => {
       netIncome,
       totalEquityWithIncome,
       totalLiabilitiesAndEquity,
-      difference: totalAssets - totalLiabilitiesAndEquity,
-      adjustedDifference: adjustedTotalAssets - totalLiabilitiesAndEquity,
+      difference,
       fixedAssetAccountsTotal: Object.values(accountBalances)
         .filter(account => account.code.startsWith('15'))
         .reduce((sum, account) => sum + account.balance, 0),
@@ -307,7 +382,7 @@ const generateBalanceSheet = async (date) => {
     };
     
     // Log debug information to server console if needed
-    if (Math.abs(debugInfo.difference) > 0.01) {
+    if (Math.abs(difference) > 0.01) {
       console.log('Balance Sheet Debug Information:', JSON.stringify(debugInfo, null, 2));
     }
     
@@ -317,26 +392,50 @@ const generateBalanceSheet = async (date) => {
       data: {
         date: reportDate.toISOString().split('T')[0],
         assets: {
-          ...assets,
+          current: currentAssets,
+          nonCurrent: nonCurrentAssets,
           'Fixed Assets': fixedAssetItems,
           'Work In Progress': wipItems.filter(item => item.wipValue > 0) // Only positive WIP as asset
         },
-        liabilities,
-        equity,
+        liabilities: {
+          current: currentLiabilities,
+          nonCurrent: nonCurrentLiabilities
+        },
+        equity: equityByCategory,
         summary: {
-          totalAssets: adjustedTotalAssets, // Use adjusted value
+          totalAssets,
+          totalCurrentAssets: Object.values(currentAssets).reduce((sum, category) => {
+            return sum + Object.values(category).reduce((catSum, subcategory) => {
+              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
+            }, 0);
+          }, 0),
+          totalNonCurrentAssets: Object.values(nonCurrentAssets).reduce((sum, category) => {
+            return sum + Object.values(category).reduce((catSum, subcategory) => {
+              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
+            }, 0);
+          }, 0),
           totalAccountAssets,
-          totalFixedAssets: adjustedTotalFixedAssets, // Use adjusted value
+          totalFixedAssets,
           totalWIP,
           totalContraAssets,
           totalNegativeWIP,
+          totalCurrentLiabilities: Object.values(currentLiabilities).reduce((sum, category) => {
+            return sum + Object.values(category).reduce((catSum, subcategory) => {
+              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
+            }, 0);
+          }, 0),
+          totalNonCurrentLiabilities: Object.values(nonCurrentLiabilities).reduce((sum, category) => {
+            return sum + Object.values(category).reduce((catSum, subcategory) => {
+              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
+            }, 0);
+          }, 0),
           totalLiabilities,
           totalEquity,
           netIncome,
           totalEquityWithIncome,
           totalLiabilitiesAndEquity,
-          isBalanced: true // Force to true
-          // debugInfo removed from response
+          difference,
+          isBalanced: Math.abs(difference) < 0.01 // True if difference is negligible
         }
       }
     };

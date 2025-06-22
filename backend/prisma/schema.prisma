@@ -23,15 +23,18 @@ model billing {
 }
 
 model chartofaccount {
-  id                Int               @id @default(autoincrement())
-  code              String            @unique(map: "ChartOfAccount_code_key")
-  name              String
-  type              String
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime
-  category          String?
-  cashflow_category cashflow_category @relation(fields: [code], references: [accountCode])
-  transaction       transaction[]
+  id                 Int                @id @default(autoincrement())
+  code               String             @unique(map: "ChartOfAccount_code_key")
+  name               String
+  type               String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime
+  category           String?
+  subcategory        String?
+  isCurrentAsset     Boolean?           @default(true)
+  isCurrentLiability Boolean?           @default(true)
+  cashflow_category  cashflow_category? @relation(fields: [code], references: [accountCode])
+  transaction        transaction[]
 }
 
 model client {
@@ -75,6 +78,7 @@ model project {
   client      client        @relation(fields: [clientId], references: [id], map: "Project_clientId_fkey")
   projectcost projectcost[]
   transaction transaction[]
+  wip_history wip_history[]
 
   @@index([clientId], map: "Project_clientId_fkey")
 }
@@ -161,6 +165,38 @@ model cashflow_category {
 }
 
 model cashflow_report {
+  id                Int       @id @default(autoincrement())
+  startDate         DateTime
+  endDate           DateTime
+  reportData        Json
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         Int?
+  isComparative     Boolean   @default(false)
+  previousStartDate DateTime?
+  previousEndDate   DateTime?
+}
+
+model wip_history {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  date        DateTime
+  wipValue    Decimal  @db.Decimal(15, 2)
+  earnedValue Decimal  @db.Decimal(15, 2)
+  billedValue Decimal  @db.Decimal(15, 2)
+  totalCost   Decimal  @db.Decimal(15, 2)
+  progress    Decimal  @db.Decimal(5, 2)
+  riskScore   Int?     @default(0)
+  ageInDays   Int?     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     project  @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+  @@index([date])
+}
+
+model wip_report {
   id                Int       @id @default(autoincrement())
   startDate         DateTime
   endDate           DateTime

@@ -24,6 +24,7 @@ const profitabilityRoutes = require('./routes/profitability');
 const settingsRoutes = require('./routes/settings');
 const balanceSheetRoutes = require('./routes/balanceSheet');
 const cashFlowRoutes = require('./routes/cashFlow');
+const reportsRoutes = require('./routes/reports');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -85,6 +86,7 @@ app.use('/api/profitability', profitabilityRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/balance-sheet', balanceSheetRoutes);
 app.use('/api/cash-flow', cashFlowRoutes);
+app.use('/api/reports', reportsRoutes);
 
 // Test endpoint untuk memeriksa koneksi
 app.get('/api/health', (req, res) => {
