@@ -13,13 +13,28 @@ model billing {
   billingDate DateTime
   percentage  Decimal  @db.Decimal(5, 2)
   amount      Decimal  @db.Decimal(15, 2)
-  status      String   @default("unpaid")
+  status      String   @default("pending")
   invoice     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime
-  project     project  @relation(fields: [projectId], references: [id], map: "Billing_projectId_fkey")
+  project     project  @relation(fields: [projectId], references: [id], map: "Billing_projectId_fkey", onDelete: Cascade)
+  createJournalEntry Boolean @default(true)
+  statusHistory billing_status_history[]
 
   @@index([projectId], map: "Billing_projectId_fkey")
+}
+
+model billing_status_history {
+  id        Int      @id @default(autoincrement())
+  billingId Int
+  oldStatus String
+  newStatus String
+  changedAt DateTime @default(now())
+  changedBy Int?
+  notes     String?
+  billing   billing  @relation(fields: [billingId], references: [id], onDelete: Cascade)
+
+  @@index([billingId])
 }
 
 model chartofaccount {
@@ -48,7 +63,7 @@ model client {
   project   project[]
 }
 
-model fixedasset {
+model fixedAsset {
   id                      Int      @id @default(autoincrement())
   assetName               String
   acquisitionDate         DateTime
@@ -62,23 +77,24 @@ model fixedasset {
 }
 
 model project {
-  id          Int           @id @default(autoincrement())
-  projectCode String        @unique(map: "Project_projectCode_key")
-  name        String
-  clientId    Int
-  startDate   DateTime
-  endDate     DateTime?
-  totalValue  Decimal       @db.Decimal(15, 2)
-  status      String        @default("ongoing")
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime
-  description String?
-  progress    Decimal?      @default(0.00) @db.Decimal(5, 2)
-  billing     billing[]
-  client      client        @relation(fields: [clientId], references: [id], map: "Project_clientId_fkey")
-  projectcost projectcost[]
-  transaction transaction[]
-  wip_history wip_history[]
+  id                      Int                       @id @default(autoincrement())
+  projectCode             String                    @unique(map: "Project_projectCode_key")
+  name                    String
+  clientId                Int
+  startDate               DateTime
+  endDate                 DateTime?
+  totalValue              Decimal                   @db.Decimal(15, 2)
+  status                  String                    @default("ongoing")
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime
+  description             String?
+  progress                Decimal?                  @default(0.00) @db.Decimal(5, 2)
+  billing                 billing[]
+  client                  client                    @relation(fields: [clientId], references: [id], map: "Project_clientId_fkey")
+  projectcost             projectcost[]
+  transaction             transaction[]
+  wip_history             wip_history[]
+  wip_cashflow_projection wip_cashflow_projection[]
 
   @@index([clientId], map: "Project_clientId_fkey")
 }
@@ -94,9 +110,25 @@ model projectcost {
   receipt     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime
-  project     project  @relation(fields: [projectId], references: [id], map: "ProjectCost_projectId_fkey")
+  project     project  @relation(fields: [projectId], references: [id], map: "ProjectCost_projectId_fkey", onDelete: Cascade)
+  billingId   Int?
+  createJournalEntry Boolean @default(true)
+  statusHistory projectcost_status_history[]
 
   @@index([projectId], map: "ProjectCost_projectId_fkey")
+}
+
+model projectcost_status_history {
+  id            Int      @id @default(autoincrement())
+  projectCostId Int
+  oldStatus     String
+  newStatus     String
+  changedAt     DateTime @default(now())
+  changedBy     Int?
+  notes         String?
+  projectcost   projectcost @relation(fields: [projectCostId], references: [id], onDelete: Cascade)
+
+  @@index([projectCostId])
 }
 
 model setting {
@@ -131,13 +163,18 @@ model transaction {
   type           String
   accountCode    String
   description    String
-  amount         Decimal        @db.Decimal(15, 2)
+  // Decimal type is used for monetary values to avoid floating point precision issues
+  // To properly handle Decimal in JavaScript:
+  // 1. Use JSON.stringify and JSON.parse to convert Prisma objects to plain JS objects
+  // 2. Then use parseFloat() on the resulting value
+  // Example: const amount = parseFloat(JSON.parse(JSON.stringify(transaction)).amount)
+  amount         Decimal        @db.Decimal(15, 2) 
   projectId      Int?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime
   notes          String?
   chartofaccount chartofaccount @relation(fields: [accountCode], references: [code], map: "Transaction_accountCode_fkey")
-  project        project?       @relation(fields: [projectId], references: [id], map: "Transaction_projectId_fkey")
+  project        project?       @relation(fields: [projectId], references: [id], map: "Transaction_projectId_fkey", onDelete: SetNull)
 
   @@index([accountCode], map: "Transaction_accountCode_fkey")
   @@index([projectId], map: "Transaction_projectId_fkey")
@@ -190,7 +227,7 @@ model wip_history {
   ageInDays   Int?     @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  project     project  @relation(fields: [projectId], references: [id])
+  project     project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@index([date])
@@ -207,4 +244,20 @@ model wip_report {
   isComparative     Boolean   @default(false)
   previousStartDate DateTime?
   previousEndDate   DateTime?
+}
+
+model wip_cashflow_projection {
+  id                   Int      @id @default(autoincrement())
+  projectId            Int
+  projectionDate       DateTime
+  expectedBilling      Decimal  @db.Decimal(15, 2)
+  expectedWipReduction Decimal  @db.Decimal(15, 2)
+  probability          Int      @default(100)
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  project              project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectionDate])
 }

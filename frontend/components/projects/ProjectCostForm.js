@@ -16,6 +16,9 @@ import {
   Textarea,
   NumberInput,
   NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   VStack,
   HStack,
   Box,
@@ -27,8 +30,24 @@ import {
   InputRightElement,
   IconButton,
   Image,
+  Switch,
+  Divider,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  Badge,
+  Accordion,
+  AccordionItem,
+  AccordionButton,
+  AccordionPanel,
+  AccordionIcon,
+  Flex,
+  Tooltip,
 } from '@chakra-ui/react';
-import { FiUpload, FiFile, FiX, FiCheck, FiDownload } from 'react-icons/fi';
+import { FiUpload, FiFile, FiX, FiCheck, FiDownload, FiBook, FiInfo } from 'react-icons/fi';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 
@@ -40,6 +59,16 @@ const DEFAULT_CATEGORIES = {
   'rental': { label: 'Rental', color: 'orange' },
   'services': { label: 'Services', color: 'teal' },
   'other': { label: 'Other', color: 'gray' },
+};
+
+// Map categories to account codes
+const CATEGORY_TO_ACCOUNT = {
+  'material': { code: '5101', name: 'Beban Proyek - Material' },
+  'labor': { code: '5102', name: 'Beban Proyek - Tenaga Kerja' },
+  'equipment': { code: '5103', name: 'Beban Proyek - Sewa Peralatan' },
+  'rental': { code: '5103', name: 'Beban Proyek - Sewa Peralatan' },
+  'services': { code: '5105', name: 'Beban Proyek - Lain-lain' },
+  'other': { code: '5105', name: 'Beban Proyek - Lain-lain' },
 };
 
 const ProjectCostForm = ({ 
@@ -58,7 +87,9 @@ const ProjectCostForm = ({
     description: '',
     amount: '',
     date: new Date().toISOString().split('T')[0],
-    status: 'pending',
+    receipt: '',
+    billingId: '',
+    createJournalEntry: true,
   };
 
   const [formData, setFormData] = useState(initialFormData);
@@ -68,9 +99,33 @@ const ProjectCostForm = ({
   const [filePreview, setFilePreview] = useState('');
   const [currentReceipt, setCurrentReceipt] = useState(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [billings, setBillings] = useState([]);
+  const [loadingBillings, setLoadingBillings] = useState(false);
+  const [accountPreview, setAccountPreview] = useState({
+    debit: { code: '', name: '' },
+    credit: { code: '', name: '' }
+  });
   const fileInputRef = useRef(null);
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+
+  // Status badge colors
+  const statusColors = {
+    pending: 'yellow',
+    approved: 'blue',
+    unpaid: 'orange',
+    paid: 'green',
+    rejected: 'red'
+  };
+
+  // Status descriptions
+  const statusDescriptions = {
+    pending: 'Menunggu persetujuan',
+    approved: 'Disetujui, siap untuk dicatat sebagai biaya',
+    unpaid: 'Biaya tercatat, belum dibayar',
+    paid: 'Pembayaran telah dilakukan',
+    rejected: 'Biaya ditolak'
+  };
 
   // Check authentication status
   useEffect(() => {
@@ -95,7 +150,9 @@ const ProjectCostForm = ({
         description: cost.description || '',
         amount: cost.amount ? cost.amount.toString() : '',
         date: cost.date ? new Date(cost.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        status: cost.status || 'pending',
+        receipt: cost.receipt || '',
+        billingId: '',
+        createJournalEntry: true, // Default to true for existing costs too
       });
       
       if (cost.receipt) {
@@ -117,43 +174,89 @@ const ProjectCostForm = ({
     setErrors({});
   }, [cost, projectId, isOpen, categories]);
 
+  // Fetch billings for the selected project
+  useEffect(() => {
+    const fetchBillings = async () => {
+      if (!formData.projectId || !token || !isAuthenticated) return;
+      
+      try {
+        setLoadingBillings(true);
+        const response = await axios.get(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${formData.projectId}/billings`, 
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        
+        if (response.data.success) {
+          setBillings(response.data.data || []);
+        }
+      } catch (error) {
+        console.error('Error fetching billings:', error);
+      } finally {
+        setLoadingBillings(false);
+      }
+    };
+    
+    fetchBillings();
+  }, [formData.projectId, token, isAuthenticated]);
+
+  // Update account preview when form data changes
+  useEffect(() => {
+    if (!formData.category) return;
+    
+    // Get expense account based on category
+    const expenseAccount = CATEGORY_TO_ACCOUNT[formData.category] || CATEGORY_TO_ACCOUNT.other;
+    
+    // Determine counter account based on billing status
+    let counterAccount = { code: '2102', name: 'Hutang Usaha' }; // Default to accounts payable
+    
+    if (formData.billingId) {
+      const selectedBilling = billings.find(b => b.id.toString() === formData.billingId);
+      if (selectedBilling && selectedBilling.status === 'paid') {
+        counterAccount = { code: '1101', name: 'Kas' }; // Use cash for paid billings
+      }
+    }
+    
+    setAccountPreview({
+      debit: expenseAccount,
+      credit: counterAccount
+    });
+  }, [formData.category, formData.billingId, billings]);
+
   // Form validation
   const validateForm = () => {
     const newErrors = {};
     
     if (!formData.projectId) {
-      newErrors.projectId = 'Project is required';
+      newErrors.projectId = 'Proyek wajib dipilih';
     }
     
     if (!formData.category) {
-      newErrors.category = 'Category is required';
+      newErrors.category = 'Kategori wajib dipilih';
     }
     
-    if (!formData.description || !formData.description.trim()) {
-      newErrors.description = 'Description is required';
+    if (!formData.description) {
+      newErrors.description = 'Deskripsi wajib diisi';
     }
     
     if (!formData.amount) {
-      newErrors.amount = 'Amount is required';
+      newErrors.amount = 'Jumlah wajib diisi';
     } else if (isNaN(parseFloat(formData.amount)) || parseFloat(formData.amount) <= 0) {
-      newErrors.amount = 'Amount must be a positive number';
+      newErrors.amount = 'Jumlah harus lebih besar dari 0';
     }
     
     if (!formData.date) {
-      newErrors.date = 'Date is required';
+      newErrors.date = 'Tanggal wajib diisi';
     } else {
       // Validate date format
       try {
         new Date(formData.date);
       } catch (e) {
-        newErrors.date = 'Invalid date format';
+        newErrors.date = 'Format tanggal tidak valid';
       }
-    }
-    
-    if (!formData.status) {
-      newErrors.status = 'Status is required';
-    } else if (!['pending', 'approved', 'rejected'].includes(formData.status)) {
-      newErrors.status = 'Status must be pending, approved, or rejected';
     }
     
     setErrors(newErrors);
@@ -180,6 +283,24 @@ const ProjectCostForm = ({
         [name]: undefined,
       });
     }
+  };
+
+  // Handle switch toggle
+  const handleSwitchChange = (e) => {
+    const { name, checked } = e.target;
+    setFormData({
+      ...formData,
+      [name]: checked,
+    });
+  };
+
+  // Format currency
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+    }).format(amount);
   };
 
   // Handle number input change
@@ -273,234 +394,95 @@ const ProjectCostForm = ({
     setFilePreview('');
   };
 
-  // Submit form
+  // Handle submit
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!validateForm()) {
-      return;
-    }
-    
-    if (!token || !isAuthenticated) {
       toast({
-        title: 'Authentication Error',
-        description: 'You must be logged in to perform this action',
+        title: 'Form tidak valid',
+        description: 'Mohon periksa kembali data yang dimasukkan',
         status: 'error',
         duration: 3000,
         isClosable: true,
       });
-      onClose();
       return;
     }
     
     setIsSubmitting(true);
     
     try {
-      // Store projectId in a separate variable before removing it from costData
-      const projectIdForUrl = formData.projectId;
+      // Create form data for file upload
+      const formDataToSend = new FormData();
+      formDataToSend.append('projectId', formData.projectId);
+      formDataToSend.append('category', formData.category);
+      formDataToSend.append('description', formData.description);
+      formDataToSend.append('amount', formData.amount);
+      formDataToSend.append('date', formData.date);
+      formDataToSend.append('createJournalEntry', formData.createJournalEntry);
       
-      // Remove projectId from cost data as it's part of the URL
-      const { projectId: projectIdValue, ...costDataWithoutProjectId } = formData;
-      
-      // Ensure numeric fields are properly converted
-      const amountValue = parseFloat(formData.amount);
-      if (isNaN(amountValue) || amountValue <= 0) {
-        throw new Error('Amount must be a positive number');
+      if (formData.billingId) {
+        formDataToSend.append('billingId', formData.billingId);
       }
       
-      // Ensure date is properly formatted
-      const dateObj = new Date(formData.date);
-      if (isNaN(dateObj.getTime())) {
-        throw new Error('Invalid date format');
+      if (selectedFile) {
+        formDataToSend.append('receipt', selectedFile);
       }
-      
-      const costData = {
-        category: formData.category || '', // Ensure we don't send undefined
-        description: (formData.description || '').trim(), // Ensure we don't send undefined and trim
-        amount: amountValue,
-        date: dateObj.toISOString().split('T')[0],
-        status: formData.status || 'pending'
-      };
-      
-      // Final validation before sending to API
-      if (!costData.category) {
-        throw new Error('Category is required');
-      }
-      
-      if (!costData.description) {
-        throw new Error('Description is required');
-      }
-      
-      // Log the entire payload for debugging
-      console.log('Submitting cost data:', {
-        url: `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectIdForUrl}/costs${cost ? `/${cost.id}` : ''}`,
-        method: cost ? 'PUT' : 'POST',
-        payload: costData,
-        rawFormData: formData // Log the original form data for comparison
-      });
-      
-      const config = {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      };
       
       let response;
-      let costId;
-      let newReceipt = null;
       
-      if (cost) {
-        // Update existing cost
+      if (cost && cost.id) {
+        // Update existing project cost
         response = await axios.put(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectIdForUrl}/costs/${cost.id}`,
-          costData,
-          config
+          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${formData.projectId}/costs/${cost.id}`,
+          formDataToSend,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'multipart/form-data',
+            },
+          }
         );
-        
-        costId = cost.id;
-        newReceipt = response.data?.data?.receipt;
       } else {
-        // Create new cost
+        // Create new project cost
         response = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectIdForUrl}/costs`,
-          costData,
-          config
+          `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${formData.projectId}/costs`,
+          formDataToSend,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'multipart/form-data',
+            },
+          }
         );
+      }
+      
+      if (response.data.success) {
+        toast({
+          title: cost ? 'Biaya proyek berhasil diperbarui' : 'Biaya proyek berhasil ditambahkan',
+          description: response.data.message,
+          status: 'success',
+          duration: 3000,
+          isClosable: true,
+        });
         
-        console.log('Create cost response:', response.data);
-        
-        const responseData = response.data?.data || response.data;
-        costId = responseData?.id;
-        newReceipt = responseData?.receipt;
-        
-        if (!costId) {
-          console.error('No cost ID returned from API. Full response:', response.data);
-          throw new Error('Failed to get cost ID from server response');
+        if (onSubmitSuccess) {
+          onSubmitSuccess(response.data.data);
         }
+        
+        onClose();
+      } else {
+        throw new Error(response.data.message || 'Terjadi kesalahan');
       }
-      
-      // If we have a receipt from the server response, update the current receipt state
-      if (newReceipt) {
-        setCurrentReceipt(newReceipt);
-      }
-      
-      // Handle file upload if there's a new file or receipt was cleared
-      if (costId) {
-        if (selectedFile) {
-          // Upload new file
-          const formDataForFile = new FormData();
-          formDataForFile.append('receipt', selectedFile);
-          
-          try {
-            console.log('Uploading receipt for cost ID:', costId);
-            setIsUploadingFile(true);
-            
-            const uploadConfig = {
-              headers: {
-                'Content-Type': 'multipart/form-data',
-                Authorization: `Bearer ${token}`,
-              },
-            };
-            
-            const uploadResponse = await axios.post(
-              `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectIdForUrl}/costs/${costId}/receipt`,
-              formDataForFile,
-              uploadConfig
-            );
-            
-            console.log('Upload receipt response:', uploadResponse.data);
-            // Set the current receipt to the newly uploaded one
-            if (uploadResponse.data?.data?.receiptPath) {
-              setCurrentReceipt(uploadResponse.data.data.receiptPath);
-            }
-          } catch (uploadError) {
-            console.error('Error uploading receipt:', uploadError);
-            
-            // Log more details about the error
-            if (uploadError.response) {
-              console.error('Response status:', uploadError.response.status);
-              console.error('Response data:', uploadError.response.data);
-            }
-            
-            // Still show success for the cost, but warning for the receipt
-            toast({
-              title: 'Warning',
-              description: 'Cost saved but failed to upload receipt: ' + 
-                (uploadError.response?.data?.message || uploadError.message || 'Unknown error'),
-              status: 'warning',
-              duration: 5000,
-              isClosable: true,
-            });
-          } finally {
-            setIsUploadingFile(false);
-          }
-        } else if (cost?.receipt && !currentReceipt) {
-          // Receipt was cleared, delete it
-          try {
-            await axios.delete(
-              `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${projectIdForUrl}/costs/${costId}/receipt`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-          } catch (deleteError) {
-            console.error('Error deleting receipt:', deleteError);
-            // Still show success for the cost, but warning for the receipt deletion
-            toast({
-              title: 'Warning',
-              description: 'Cost saved but failed to remove receipt: ' + 
-                (deleteError.response?.data?.message || deleteError.message || 'Unknown error'),
-              status: 'warning',
-              duration: 5000,
-              isClosable: true,
-            });
-          }
-        }
-      }
-      
+    } catch (error) {
+      console.error('Error submitting project cost:', error);
       toast({
-        title: 'Success',
-        description: cost ? 'Cost updated successfully' : 'Cost added successfully',
-        status: 'success',
+        title: 'Error',
+        description: error.response?.data?.message || error.message || 'Terjadi kesalahan',
+        status: 'error',
         duration: 3000,
         isClosable: true,
       });
-      
-      if (onSubmitSuccess) {
-        onSubmitSuccess();
-      }
-      
-      onClose();
-    } catch (error) {
-      console.error('Error saving project cost:', error);
-      if (error.response) {
-        console.error('Response status:', error.response.status);
-        console.error('Response data:', error.response.data);
-      }
-      
-      // Check if error is due to authentication
-      if (error.response?.status === 401) {
-        toast({
-          title: 'Session Expired',
-          description: 'Your session has expired. Please login again.',
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
-        onClose();
-      } else {
-        const errorMessage = error.response?.data?.message || error.message || 'Failed to save project cost';
-        toast({
-          title: 'Error',
-          description: errorMessage,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
-      }
     } finally {
       setIsSubmitting(false);
     }
@@ -556,42 +538,67 @@ const ProjectCostForm = ({
     );
   };
 
+  // Render status badge when editing
+  const renderStatusBadge = () => {
+    if (!cost || !cost.status) return null;
+    
+    return (
+      <Flex align="center" mb={4}>
+        <Text fontWeight="bold" mr={2}>Status:</Text>
+        <Tooltip label={statusDescriptions[cost.status]}>
+          <Badge colorScheme={statusColors[cost.status]} fontSize="0.9em" p={1} borderRadius="md">
+            {cost.status.toUpperCase()}
+          </Badge>
+        </Tooltip>
+        <Tooltip label="Status tidak dapat diubah langsung dari form ini. Gunakan tombol aksi di halaman daftar biaya proyek.">
+          <Box ml={2}>
+            <FiInfo />
+          </Box>
+        </Tooltip>
+      </Flex>
+    );
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader>{cost ? 'Edit Cost' : 'Add New Cost'}</ModalHeader>
+        <ModalHeader>{cost ? 'Edit Biaya Proyek' : 'Tambah Biaya Proyek'}</ModalHeader>
         <ModalCloseButton />
-        <form onSubmit={handleSubmit}>
-          <ModalBody>
-            <VStack spacing={4}>
-              {!projectId && projects.length > 0 && (
-                <FormControl isInvalid={errors.projectId}>
-                  <FormLabel>Project</FormLabel>
-                  <Select
-                    name="projectId"
-                    value={formData.projectId}
-                    onChange={handleChange}
-                    placeholder="Select project"
-                  >
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id.toString()}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <FormErrorMessage>{errors.projectId}</FormErrorMessage>
-                </FormControl>
-              )}
+        <ModalBody>
+          <form onSubmit={handleSubmit}>
+            <VStack spacing={4} align="stretch">
+              {/* Display status badge when editing */}
+              {cost && renderStatusBadge()}
 
-              <FormControl isInvalid={errors.category}>
-                <FormLabel>Category</FormLabel>
+              {/* Project selection */}
+              <FormControl isRequired isInvalid={errors.projectId}>
+                <FormLabel>Proyek</FormLabel>
+                <Select
+                  name="projectId"
+                  value={formData.projectId}
+                  onChange={handleChange}
+                  placeholder="Pilih proyek"
+                  isDisabled={!!cost} // Disable if editing
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id.toString()}>
+                      {project.projectCode} - {project.name}
+                    </option>
+                  ))}
+                </Select>
+                {errors.projectId && <FormErrorMessage>{errors.projectId}</FormErrorMessage>}
+              </FormControl>
+
+              {/* Category */}
+              <FormControl isRequired isInvalid={errors.category}>
+                <FormLabel>Kategori</FormLabel>
                 <Select
                   name="category"
                   value={formData.category}
                   onChange={handleChange}
-                  placeholder="Select category"
-                  isRequired
+                  placeholder="Pilih kategori"
+                  isDisabled={cost && cost.status !== 'pending'}
                 >
                   {Object.entries(categories).map(([value, { label }]) => (
                     <option key={value} value={value}>
@@ -599,141 +606,169 @@ const ProjectCostForm = ({
                     </option>
                   ))}
                 </Select>
-                <FormErrorMessage>{errors.category}</FormErrorMessage>
+                {errors.category && <FormErrorMessage>{errors.category}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.description}>
-                <FormLabel>Description</FormLabel>
+              {/* Description */}
+              <FormControl isRequired isInvalid={errors.description}>
+                <FormLabel>Deskripsi</FormLabel>
                 <Textarea
                   name="description"
                   value={formData.description}
                   onChange={handleChange}
-                  placeholder="Enter cost description"
-                  rows={3}
-                  isRequired
+                  placeholder="Masukkan deskripsi biaya"
+                  isDisabled={cost && cost.status !== 'pending'}
                 />
-                <FormErrorMessage>{errors.description}</FormErrorMessage>
+                {errors.description && <FormErrorMessage>{errors.description}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.amount}>
-                <FormLabel>Amount</FormLabel>
+              {/* Amount */}
+              <FormControl isRequired isInvalid={errors.amount}>
+                <FormLabel>Jumlah</FormLabel>
                 <NumberInput
-                  min={1}
-                  precision={0}
-                  step={1000}
                   value={formData.amount}
                   onChange={(value) => handleNumberChange('amount', value)}
-                  isRequired
+                  min={0}
+                  precision={0}
+                  isDisabled={cost && cost.status !== 'pending'}
                 >
-                  <NumberInputField placeholder="Enter amount" />
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
                 </NumberInput>
-                <FormErrorMessage>{errors.amount}</FormErrorMessage>
+                {errors.amount && <FormErrorMessage>{errors.amount}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.date}>
-                <FormLabel>Date</FormLabel>
+              {/* Date */}
+              <FormControl isRequired isInvalid={errors.date}>
+                <FormLabel>Tanggal</FormLabel>
                 <Input
-                  name="date"
                   type="date"
+                  name="date"
                   value={formData.date}
                   onChange={handleChange}
-                  isRequired
+                  isDisabled={cost && cost.status !== 'pending'}
                 />
-                <FormErrorMessage>{errors.date}</FormErrorMessage>
+                {errors.date && <FormErrorMessage>{errors.date}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.status}>
-                <FormLabel>Status</FormLabel>
-                <Select
-                  name="status"
-                  value={formData.status}
-                  onChange={handleChange}
-                  isRequired
-                >
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                </Select>
-                <FormErrorMessage>{errors.status}</FormErrorMessage>
-              </FormControl>
-
+              {/* Receipt upload */}
               <FormControl>
-                <FormLabel>Receipt/Attachment</FormLabel>
-                {renderFilePreview()}
-                
-                {selectedFile && (
-                  <Box mt={2} p={2} borderWidth="1px" borderRadius="md">
-                    <HStack justifyContent="space-between">
-                      <HStack>
-                        {selectedFile.type.startsWith('image/') ? (
-                          <Image
-                            src={filePreview}
-                            alt="File preview"
-                            boxSize="40px"
-                            objectFit="cover"
-                            borderRadius="md"
-                          />
-                        ) : (
-                          <FiFile size={24} />
-                        )}
-                        <VStack align="start" spacing={0}>
-                          <Text>{selectedFile.name}</Text>
-                          <Text fontSize="xs" color="gray.500">{(selectedFile.size / 1024).toFixed(2)} KB</Text>
-                        </VStack>
-                      </HStack>
-                      <IconButton
-                        icon={<FiX />}
-                        size="sm"
-                        aria-label="Remove file"
-                        onClick={clearSelectedFile}
-                      />
-                    </HStack>
-                  </Box>
-                )}
-                
-                {!selectedFile && !currentReceipt && (
-                  <Button 
-                    leftIcon={<FiUpload />} 
-                    onClick={() => fileInputRef.current.click()}
-                    variant="outline"
-                    width="100%"
-                    isDisabled={isUploadingFile}
-                  >
-                    Upload Receipt
-                  </Button>
-                )}
-                
-                <Input
-                  id="file-input"
+                <FormLabel>Upload Bukti</FormLabel>
+                <input
                   type="file"
-                  accept="image/jpeg,image/png,image/gif,application/pdf,.doc,.docx"
-                  onChange={handleFileChange}
                   ref={fileInputRef}
-                  display="none"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                  accept="image/jpeg,image/png,application/pdf"
+                  disabled={cost && cost.status !== 'pending'}
                 />
-                
-                <FormHelperText>
-                  Upload receipt or supporting document (max 5MB, image, PDF, or document)
-                </FormHelperText>
+                <Flex>
+                  <Button
+                    leftIcon={<FiUpload />}
+                    onClick={() => fileInputRef.current.click()}
+                    isLoading={isUploadingFile}
+                    isDisabled={(cost && cost.status !== 'pending') || isUploadingFile}
+                  >
+                    Pilih File
+                  </Button>
+                  {(selectedFile || currentReceipt) && (
+                    <Button
+                      ml={2}
+                      colorScheme="red"
+                      variant="outline"
+                      leftIcon={<FiX />}
+                      onClick={selectedFile ? clearSelectedFile : clearCurrentReceipt}
+                      isDisabled={cost && cost.status !== 'pending'}
+                    >
+                      Hapus
+                    </Button>
+                  )}
+                </Flex>
+                {renderFilePreview()}
               </FormControl>
-            </VStack>
-          </ModalBody>
 
-          <ModalFooter>
-            <Button mr={3} onClick={onClose} variant="ghost" isDisabled={isSubmitting || isUploadingFile}>
-              Cancel
-            </Button>
-            <Button 
-              colorScheme="teal" 
-              type="submit" 
-              isLoading={isSubmitting || isUploadingFile}
-              loadingText={isUploadingFile ? "Uploading" : "Saving"}
-              isDisabled={isUploadingFile}
-            >
-              {cost ? 'Update' : 'Add'}
-            </Button>
-          </ModalFooter>
-        </form>
+              {/* Journal Entry Toggle */}
+              <FormControl display="flex" alignItems="center" mt={4}>
+                <FormLabel htmlFor="create-journal" mb="0">
+                  Buat Jurnal Akuntansi
+                </FormLabel>
+                <Switch
+                  id="create-journal"
+                  isChecked={formData.createJournalEntry}
+                  onChange={handleSwitchChange}
+                  colorScheme="blue"
+                  isDisabled={cost && cost.status !== 'pending'}
+                />
+              </FormControl>
+
+              {/* Journal Entry Preview */}
+              {formData.createJournalEntry && formData.amount && (
+                <Box mt={4}>
+                  <Divider my={2} />
+                  <Text fontWeight="bold" mb={2}>
+                    Preview Jurnal Akuntansi
+                    <Tooltip label="Jurnal akan dibuat saat status berubah menjadi 'unpaid' atau 'paid'">
+                      <IconButton
+                        icon={<FiInfo />}
+                        size="xs"
+                        ml={2}
+                        aria-label="Info about journal entries"
+                        variant="ghost"
+                      />
+                    </Tooltip>
+                  </Text>
+                  <Table variant="simple" size="sm">
+                    <Thead>
+                      <Tr>
+                        <Th>Account</Th>
+                        <Th>Debit</Th>
+                        <Th>Credit</Th>
+                      </Tr>
+                    </Thead>
+                    <Tbody>
+                      <Tr>
+                        <Td>
+                          <Text fontWeight="medium">{accountPreview.debit.code}</Text>
+                          <Text fontSize="sm">{accountPreview.debit.name}</Text>
+                        </Td>
+                        <Td color="green.600" fontWeight="medium">
+                          {formData.amount ? formatCurrency(formData.amount) : '-'}
+                        </Td>
+                        <Td>-</Td>
+                      </Tr>
+                      <Tr>
+                        <Td>
+                          <Text fontWeight="medium">{accountPreview.credit.code}</Text>
+                          <Text fontSize="sm">{accountPreview.credit.name}</Text>
+                        </Td>
+                        <Td>-</Td>
+                        <Td color="red.600" fontWeight="medium">
+                          {formData.amount ? formatCurrency(formData.amount) : '-'}
+                        </Td>
+                      </Tr>
+                    </Tbody>
+                  </Table>
+                </Box>
+              )}
+            </VStack>
+          </form>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="ghost" mr={3} onClick={onClose}>
+            Batal
+          </Button>
+          <Button 
+            colorScheme="blue" 
+            onClick={handleSubmit} 
+            isLoading={isSubmitting}
+            isDisabled={cost && cost.status !== 'pending'}
+          >
+            {cost ? 'Perbarui' : 'Simpan'}
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );

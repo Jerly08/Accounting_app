@@ -1,82 +1,106 @@
 /**
- * Logger utility
- * Provides structured logging for the application
+ * Simple logger utility
  */
+const fs = require('fs');
+const path = require('path');
 
-// Log levels
-const LOG_LEVELS = {
-  ERROR: 'ERROR',
-  WARN: 'WARN',
-  INFO: 'INFO',
-  DEBUG: 'DEBUG'
-};
+// Create logs directory if it doesn't exist
+const logsDir = path.join(__dirname, '../../../logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
 
-// Current log level (can be set from environment variable)
-const currentLogLevel = process.env.LOG_LEVEL || 'INFO';
+// Log file paths
+const errorLogPath = path.join(logsDir, 'error.log');
+const infoLogPath = path.join(logsDir, 'info.log');
 
-// Format timestamp
-const formatTimestamp = () => {
-  return new Date().toISOString();
-};
-
-// Format log message
-const formatLogMessage = (level, message, context = {}) => {
-  const timestamp = formatTimestamp();
+/**
+ * Format log message with timestamp
+ * @param {string} level - Log level
+ * @param {string} message - Log message
+ * @param {Object} data - Additional data to log
+ * @returns {string} - Formatted log message
+ */
+const formatLogMessage = (level, message, data) => {
+  const timestamp = new Date().toISOString();
+  let logMessage = `[${timestamp}] [${level}] ${message}`;
   
-  // Build structured log object
-  const logObject = {
-    timestamp,
-    level,
-    message
-  };
-  
-  // Add context if provided
-  if (Object.keys(context).length > 0) {
-    logObject.context = context;
-  }
-  
-  return JSON.stringify(logObject);
-};
-
-// Log methods
-const logger = {
-  error: (message, context = {}) => {
-    console.error(formatLogMessage(LOG_LEVELS.ERROR, message, context));
-  },
-  
-  warn: (message, context = {}) => {
-    if (['ERROR', 'WARN', 'INFO', 'DEBUG'].includes(currentLogLevel)) {
-      console.warn(formatLogMessage(LOG_LEVELS.WARN, message, context));
-    }
-  },
-  
-  info: (message, context = {}) => {
-    if (['INFO', 'DEBUG'].includes(currentLogLevel)) {
-      console.info(formatLogMessage(LOG_LEVELS.INFO, message, context));
-    }
-  },
-  
-  debug: (message, context = {}) => {
-    if (['DEBUG'].includes(currentLogLevel)) {
-      console.debug(formatLogMessage(LOG_LEVELS.DEBUG, message, context));
-    }
-  },
-  
-  // Log HTTP request
-  request: (req, res, responseTime) => {
-    if (['INFO', 'DEBUG'].includes(currentLogLevel)) {
-      const context = {
-        method: req.method,
-        url: req.originalUrl,
-        statusCode: res.statusCode,
-        responseTime: `${responseTime}ms`,
-        userAgent: req.get('user-agent') || '-',
-        ip: req.ip || req.connection.remoteAddress
-      };
-      
-      logger.info(`${req.method} ${req.originalUrl} ${res.statusCode}`, context);
+  if (data) {
+    if (data instanceof Error) {
+      logMessage += `\n${data.stack || data.message}`;
+    } else {
+      try {
+        logMessage += `\n${JSON.stringify(data, null, 2)}`;
+      } catch (e) {
+        logMessage += `\n[Non-serializable data]`;
+      }
     }
   }
+  
+  return logMessage;
 };
 
-module.exports = logger; 
+/**
+ * Write log to file
+ * @param {string} filePath - Path to log file
+ * @param {string} message - Message to log
+ */
+const writeToFile = (filePath, message) => {
+  fs.appendFile(filePath, message + '\n', (err) => {
+    if (err) {
+      console.error('Error writing to log file:', err);
+    }
+  });
+};
+
+/**
+ * Log error message
+ * @param {string} message - Error message
+ * @param {Error|Object} error - Error object or additional data
+ */
+const error = (message, error) => {
+  const logMessage = formatLogMessage('ERROR', message, error);
+  console.error(logMessage);
+  writeToFile(errorLogPath, logMessage);
+};
+
+/**
+ * Log info message
+ * @param {string} message - Info message
+ * @param {Object} data - Additional data
+ */
+const info = (message, data) => {
+  const logMessage = formatLogMessage('INFO', message, data);
+  console.log(logMessage);
+  writeToFile(infoLogPath, logMessage);
+};
+
+/**
+ * Log warning message
+ * @param {string} message - Warning message
+ * @param {Object} data - Additional data
+ */
+const warn = (message, data) => {
+  const logMessage = formatLogMessage('WARN', message, data);
+  console.warn(logMessage);
+  writeToFile(infoLogPath, logMessage);
+};
+
+/**
+ * Log debug message (only in development)
+ * @param {string} message - Debug message
+ * @param {Object} data - Additional data
+ */
+const debug = (message, data) => {
+  if (process.env.NODE_ENV !== 'production') {
+    const logMessage = formatLogMessage('DEBUG', message, data);
+    console.debug(logMessage);
+  }
+};
+
+module.exports = {
+  error,
+  info,
+  warn,
+  debug
+}; 

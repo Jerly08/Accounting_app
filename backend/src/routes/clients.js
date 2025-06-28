@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
-const { prisma } = require('../utils/prisma');
+const { auth, authorize } = require('../middleware/auth');
+const prismaUtil = require('../utils/prisma');
+const prisma = prismaUtil.prisma;
 
 // Simple in-memory cache for client data
 const cache = {
@@ -25,7 +26,7 @@ const isCacheValid = (cacheKey) => {
  * @desc    Get all clients with optional filtering
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     console.log('GET /api/clients - Fetching clients');
     const { search, limit, page, noCache } = req.query;
@@ -123,11 +124,26 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/clients/clear-cache
+ * @desc    Clear client cache
+ * @access  Private (Admin only)
+ */
+router.get('/clear-cache', auth, authorize('admin'), (req, res) => {
+  cache.clients.data = null;
+  cache.clients.timestamp = null;
+  
+  res.json({
+    success: true,
+    message: 'Client cache cleared successfully'
+  });
+});
+
+/**
  * @route   GET /api/clients/:id
  * @desc    Get single client by ID
  * @access  Private
  */
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const client = await prisma.client.findUnique({
@@ -172,7 +188,7 @@ router.get('/:id', authenticate, async (req, res) => {
  * @desc    Create new client
  * @access  Private
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
     const { name, phone, email, address } = req.body;
 
@@ -217,7 +233,7 @@ router.post('/', authenticate, async (req, res) => {
  * @desc    Update client
  * @access  Private
  */
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, phone, email, address } = req.body;
@@ -268,7 +284,7 @@ router.put('/:id', authenticate, async (req, res) => {
  * @desc    Delete client
  * @access  Private
  */
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -315,21 +331,6 @@ router.delete('/:id', authenticate, async (req, res) => {
       error: error.message 
     });
   }
-});
-
-/**
- * @route   GET /api/clients/clear-cache
- * @desc    Clear client cache
- * @access  Private (Admin only)
- */
-router.get('/clear-cache', authenticate, authorize('admin'), (req, res) => {
-  cache.clients.data = null;
-  cache.clients.timestamp = null;
-  
-  res.json({
-    success: true,
-    message: 'Client cache cleared successfully'
-  });
 });
 
 module.exports = router; 

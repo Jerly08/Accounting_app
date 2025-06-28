@@ -32,6 +32,12 @@ import {
   useDisclosure,
   Tooltip,
   Icon,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
+  Code,
+  FormLabel,
 } from '@chakra-ui/react';
 import { FiSearch, FiArrowRight, FiFilter, FiEdit, FiPlus, FiMoreVertical, FiInfo } from 'react-icons/fi';
 import { useRouter } from 'next/router';
@@ -55,6 +61,11 @@ const WipPage = () => {
   const [statusFilter, setStatusFilter] = useState('ongoing');
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+  const [totals, setTotals] = useState({
+    totalCosts: 0,
+    totalBilled: 0,
+    totalWip: 0
+  });
 
   // Format currency
   const formatCurrency = (amount) => {
@@ -138,6 +149,7 @@ const WipPage = () => {
       });
       
       setProjects(projectsWithDefaults);
+      calculateTotals(projectsWithDefaults);
       setError(null);
     } catch (error) {
       console.error('Error fetching WIP data:', error);
@@ -212,6 +224,16 @@ const WipPage = () => {
     }));
   };
 
+  const calculateTotals = (projects) => {
+    const totalCosts = projects.reduce((sum, project) => sum + parseFloat(project.totalCosts || 0), 0);
+    const totalBilled = projects.reduce((sum, project) => sum + parseFloat(project.totalBilled || 0), 0);
+    const totalWip = projects.reduce((sum, project) => sum + parseFloat(project.wipValue || 0), 0);
+    
+    console.log('WIP Summary:', { totalCosts, totalBilled, totalWip, projectCount: projects.length });
+    
+    setTotals({ totalCosts, totalBilled, totalWip });
+  };
+
   return (
     <Box p={4}>
       <Flex justify="space-between" align="center" mb={6}>
@@ -231,9 +253,24 @@ const WipPage = () => {
       </Flex>
 
       {/* Filters */}
-      <Box mb={6} p={4} bg="white" borderRadius="md" shadow="sm">
-        <Heading as="h3" size="sm" mb={4}>Filters</Heading>
-        <Stack direction={{ base: 'column', md: 'row' }} spacing={4} mb={4}>
+      <Box mb={5} p={4} borderWidth="1px" borderRadius="lg" bg="white">
+        <Flex direction={{ base: 'column', md: 'row' }} justify="space-between" align={{ base: 'flex-start', md: 'center' }} wrap="wrap" gap={3}>
+          <HStack mb={{ base: 2, md: 0 }}>
+            <FormLabel htmlFor="status-filter" mb={0}>Status:</FormLabel>
+            <Select
+              id="status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              w={{ base: 'full', md: '150px' }}
+            >
+              <option value="">All</option>
+              <option value="ongoing">Ongoing</option>
+              <option value="planned">Planned</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </Select>
+          </HStack>
+
           <InputGroup maxW={{ md: '300px' }}>
             <InputLeftElement pointerEvents="none">
               <FiSearch color="gray.300" />
@@ -245,17 +282,6 @@ const WipPage = () => {
             />
           </InputGroup>
 
-          <Select
-            placeholder="Filter by status"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            maxW={{ md: '200px' }}
-          >
-            <option value="ongoing">Ongoing</option>
-            <option value="completed">Completed</option>
-            <option value="all">All Statuses</option>
-          </Select>
-
           <Button 
             variant="outline" 
             onClick={resetFilters}
@@ -263,7 +289,7 @@ const WipPage = () => {
           >
             Reset Filters
           </Button>
-        </Stack>
+        </Flex>
       </Box>
 
       {/* Summary Cards */}
@@ -274,7 +300,12 @@ const WipPage = () => {
         </Stat>
         
         <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Costs</StatLabel>
+          <StatLabel display="flex" alignItems="center">
+            Total Costs
+            <Tooltip label="Includes all project costs with status 'approved', 'pending', 'paid', 'unpaid', and 'rejected'">
+              <span><Icon as={FiInfo} ml={1} boxSize={3} color="gray.500" /></span>
+            </Tooltip>
+          </StatLabel>
           <StatNumber>{formatCurrency(totalCosts)}</StatNumber>
         </Stat>
         
@@ -286,7 +317,7 @@ const WipPage = () => {
         <Stat bg="white" p={4} borderRadius="md" shadow="sm">
           <StatLabel display="flex" alignItems="center">
             WIP Value
-            <Tooltip label="WIP Value = Total Costs - Total Billed">
+            <Tooltip label="WIP Value = Earned Value - Amount Billed. Earned Value is calculated as Project Value × Completion Percentage.">
               <span><Icon as={FiInfo} ml={1} boxSize={3} color="gray.500" /></span>
             </Tooltip>
           </StatLabel>
@@ -325,12 +356,13 @@ const WipPage = () => {
               <Tr>
                 <Th>Project</Th>
                 <Th>Client</Th>
+                <Th>Status</Th>
                 <Th>Progress</Th>
                 <Th isNumeric>Total Value</Th>
                 <Th isNumeric>Total Costs</Th>
                 <Th isNumeric>Total Billed</Th>
                 <Th isNumeric>
-                  <Tooltip label="WIP Value = Total Costs - Total Billed">
+                  <Tooltip label="WIP Value = Earned Value - Amount Billed. Earned Value is calculated as Project Value × Completion Percentage.">
                     <span>WIP Value <Icon as={FiInfo} boxSize={3} /></span>
                   </Tooltip>
                 </Th>
@@ -350,6 +382,16 @@ const WipPage = () => {
                     <Text fontSize="sm" color="gray.500">{project.projectCode}</Text>
                   </Td>
                   <Td>{project.client?.name || 'N/A'}</Td>
+                  <Td>
+                    <Badge colorScheme={
+                      project.status === 'ongoing' ? 'green' : 
+                      project.status === 'completed' ? 'blue' : 
+                      project.status === 'planned' ? 'purple' :
+                      project.status === 'cancelled' ? 'red' : 'gray'
+                    }>
+                      {project.status ? project.status.charAt(0).toUpperCase() + project.status.slice(1) : 'N/A'}
+                    </Badge>
+                  </Td>
                   <Td>
                     <Box>
                       <Flex align="center" mb={1}>

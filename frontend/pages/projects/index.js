@@ -32,12 +32,14 @@ import ProjectForm from '../../components/projects/ProjectForm';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import EmptyState from '../../components/common/EmptyState';
+import React from 'react';
 
 // Status colors for badges
 const statusColors = {
   ongoing: 'green',
   completed: 'blue',
   cancelled: 'red',
+  planned: 'purple',
 };
 
 const ProjectsPage = () => {
@@ -49,7 +51,7 @@ const ProjectsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
-  const { token, isAuthenticated, loading: authLoading } = useAuth();
+  const { token, isAuthenticated, loading: authLoading, isAdmin, checkAdminStatus } = useAuth();
   const toast = useToast();
 
   // Format currency
@@ -60,6 +62,27 @@ const ProjectsPage = () => {
       minimumFractionDigits: 0,
     }).format(amount);
   };
+
+  // Function to check if user is admin (safely)
+  const checkIsAdmin = () => {
+    try {
+      // Check context first
+      if (isAdmin) return true;
+      
+      // Fallback to localStorage
+      const storedUser = localStorage.getItem('user');
+      if (!storedUser) return false;
+      
+      const userObj = JSON.parse(storedUser);
+      return userObj?.role === 'admin';
+    } catch (error) {
+      console.error('Error checking admin status:', error);
+      return false;
+    }
+  };
+
+  // Memoize the admin check to avoid recalculating on every render
+  const userIsAdmin = React.useMemo(() => checkIsAdmin(), [isAdmin]);
 
   // Fetch projects from API
   const fetchProjects = async () => {
@@ -106,12 +129,41 @@ const ProjectsPage = () => {
     }
   };
 
+  // Function to ensure user has admin role if they should
+  const ensureAdminRole = () => {
+    try {
+      // Get current user from localStorage
+      const storedUser = localStorage.getItem('user');
+      if (!storedUser) return;
+      
+      const userObj = JSON.parse(storedUser);
+      
+      // If user is admin in context but not in localStorage, update localStorage
+      if (isAdmin && userObj.role !== 'admin') {
+        console.log('Updating user role in localStorage to admin');
+        userObj.role = 'admin';
+        localStorage.setItem('user', JSON.stringify(userObj));
+      }
+      
+      // If user is admin in localStorage but not in context, update context
+      if (userObj.role === 'admin' && !isAdmin) {
+        console.log('User should be admin but context shows non-admin');
+        // Force page reload to refresh auth context
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Error in ensureAdminRole:', error);
+    }
+  };
+
   // Watch for token and authentication changes
   useEffect(() => {
     if (token && isAuthenticated && !authLoading) {
+      console.log('Current user role:', isAdmin ? 'admin' : 'user');
+      ensureAdminRole();
       fetchProjects();
     }
-  }, [token, isAuthenticated, authLoading]);
+  }, [token, isAuthenticated, authLoading, isAdmin]);
 
   // Handle auth loss during session
   useEffect(() => {
@@ -132,6 +184,45 @@ const ProjectsPage = () => {
     return matchesSearch && matchesStatus;
   });
 
+  // Function to verify admin status with the server
+  const verifyAdminStatus = async () => {
+    try {
+      const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      // Check if the response contains user data with role
+      if (response.data && response.data.user && response.data.user.role) {
+        const serverRole = response.data.user.role;
+        console.log('Server verified user role:', serverRole);
+        
+        // Update local storage if needed
+        if (serverRole === 'admin') {
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            const userObj = JSON.parse(storedUser);
+            if (userObj.role !== 'admin') {
+              userObj.role = 'admin';
+              localStorage.setItem('user', JSON.stringify(userObj));
+              console.log('Updated localStorage user role to admin');
+              // Force reload to update context
+              window.location.reload();
+            }
+          }
+        }
+        
+        return serverRole === 'admin';
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error verifying admin status:', error);
+      return false;
+    }
+  };
+
   // Handle project deletion
   const handleDelete = async (id) => {
     if (!token || !isAuthenticated) {
@@ -143,6 +234,22 @@ const ProjectsPage = () => {
         isClosable: true,
       });
       return;
+    }
+
+    // Check if user is admin using our memoized function
+    if (!userIsAdmin) {
+      // Double check with server before showing error
+      const isServerAdmin = await checkAdminStatus();
+      if (!isServerAdmin) {
+        toast({
+          title: 'Permission Denied',
+          description: 'Only administrators can delete projects',
+          status: 'error',
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
     }
 
     if (window.confirm('Are you sure you want to delete this project?')) {
@@ -167,11 +274,19 @@ const ProjectsPage = () => {
       } catch (error) {
         console.error('Error deleting project:', error);
         
-        // Check if error is due to authentication
+        // Check if error is due to authentication or authorization
         if (error.response?.status === 401) {
           toast({
             title: 'Session Expired',
             description: 'Your session has expired. Please login again.',
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+          });
+        } else if (error.response?.status === 403) {
+          toast({
+            title: 'Permission Denied',
+            description: 'You do not have permission to delete this project.',
             status: 'error',
             duration: 5000,
             isClosable: true,
@@ -237,7 +352,8 @@ const ProjectsPage = () => {
           maxW={{ md: '200px' }}
         >
           <option value="">All</option>
-          <option value="ongoing">Active</option>
+          <option value="ongoing">Ongoing</option>
+          <option value="planned">Planned</option>
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
         </Select>
@@ -275,7 +391,7 @@ const ProjectsPage = () => {
                   <Td>{project.client?.name || 'N/A'}</Td>
                   <Td>
                     <Badge colorScheme={statusColors[project.status] || 'gray'}>
-                      {project.status === 'ongoing' ? 'Active' : project.status.charAt(0).toUpperCase() + project.status.slice(1)}
+                      {project.status.charAt(0).toUpperCase() + project.status.slice(1)}
                     </Badge>
                   </Td>
                   <Td>{formatCurrency(project.totalValue)}</Td>
@@ -294,13 +410,15 @@ const ProjectsPage = () => {
                         >
                           Edit
                         </MenuItem>
-                        <MenuItem 
-                          icon={<FiTrash2 />} 
-                          color="red.500"
-                          onClick={() => handleDelete(project.id)}
-                        >
-                          Delete
-                        </MenuItem>
+                        {userIsAdmin && (
+                          <MenuItem 
+                            icon={<FiTrash2 />} 
+                            color="red.500"
+                            onClick={() => handleDelete(project.id)}
+                          >
+                            Delete
+                          </MenuItem>
+                        )}
                       </MenuList>
                     </Menu>
                   </Td>

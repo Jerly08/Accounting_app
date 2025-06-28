@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-const { authenticate } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
 const { generateBalanceSheet, generateComparativeBalanceSheet } = require('../services/balanceSheet');
 
 const prisma = new PrismaClient();
@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
  * @desc    Generate balance sheet report
  * @access  Private
  */
-router.get('/balance-sheet', authenticate, async (req, res) => {
+router.get('/balance-sheet', auth, async (req, res) => {
   try {
     const { date } = req.query;
     
@@ -42,7 +42,7 @@ router.get('/balance-sheet', authenticate, async (req, res) => {
  * @desc    Check if balance sheet is balanced
  * @access  Private
  */
-router.get('/balance-check', authenticate, async (req, res) => {
+router.get('/balance-check', auth, async (req, res) => {
   try {
     const { date } = req.query;
     
@@ -91,7 +91,7 @@ router.get('/balance-check', authenticate, async (req, res) => {
  * @desc    Generate comparative balance sheet report
  * @access  Private
  */
-router.get('/comparative-balance-sheet', authenticate, async (req, res) => {
+router.get('/comparative-balance-sheet', auth, async (req, res) => {
   try {
     const { currentDate, previousDate } = req.query;
     

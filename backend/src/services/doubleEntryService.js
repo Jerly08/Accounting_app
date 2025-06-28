@@ -3,6 +3,8 @@
  * Provides functions to handle double-entry accounting transactions
  */
 const { PrismaClient } = require('@prisma/client');
+const logger = require('../utils/logger');
+
 const prisma = new PrismaClient();
 
 /**
@@ -68,6 +70,89 @@ const createDoubleEntryTransaction = async (primaryTransaction, counterTransacti
     return result;
   } catch (error) {
     console.error('Error creating double-entry transaction:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update a balanced double-entry transaction
+ * @param {number} primaryId - ID of the primary transaction
+ * @param {number} counterId - ID of the counter transaction
+ * @param {Object} primaryTransactionUpdate - Primary transaction update data
+ * @param {Object} counterTransactionUpdate - Counter transaction update data
+ * @returns {Promise<Object>} - Updated transactions
+ */
+const updateDoubleEntryTransaction = async (primaryId, counterId, primaryTransactionUpdate, counterTransactionUpdate) => {
+  try {
+    // Validate that both transactions exist
+    const primaryExists = await prisma.transaction.findUnique({
+      where: { id: primaryId }
+    });
+    
+    const counterExists = await prisma.transaction.findUnique({
+      where: { id: counterId }
+    });
+    
+    if (!primaryExists || !counterExists) {
+      throw new Error('One or both transactions not found');
+    }
+    
+    // Start a transaction to ensure both entries are updated or none
+    const result = await prisma.$transaction(async (prisma) => {
+      // Update the primary transaction
+      const primary = await prisma.transaction.update({
+        where: { id: primaryId },
+        data: {
+          date: primaryTransactionUpdate.date ? new Date(primaryTransactionUpdate.date) : undefined,
+          type: primaryTransactionUpdate.type,
+          accountCode: primaryTransactionUpdate.accountCode,
+          description: primaryTransactionUpdate.description,
+          amount: primaryTransactionUpdate.amount ? parseFloat(primaryTransactionUpdate.amount) : undefined,
+          projectId: primaryTransactionUpdate.projectId ? parseInt(primaryTransactionUpdate.projectId) : primaryTransactionUpdate.projectId === null ? null : undefined,
+          notes: primaryTransactionUpdate.notes,
+          updatedAt: new Date()
+        },
+        include: {
+          chartofaccount: true,
+          project: primaryTransactionUpdate.projectId ? {
+            select: {
+              projectCode: true,
+              name: true
+            }
+          } : undefined
+        }
+      });
+
+      // Update the counter transaction
+      const counter = await prisma.transaction.update({
+        where: { id: counterId },
+        data: {
+          date: counterTransactionUpdate.date ? new Date(counterTransactionUpdate.date) : undefined,
+          type: counterTransactionUpdate.type,
+          accountCode: counterTransactionUpdate.accountCode,
+          description: counterTransactionUpdate.description,
+          amount: counterTransactionUpdate.amount ? parseFloat(counterTransactionUpdate.amount) : undefined,
+          projectId: counterTransactionUpdate.projectId ? parseInt(counterTransactionUpdate.projectId) : counterTransactionUpdate.projectId === null ? null : undefined,
+          notes: counterTransactionUpdate.notes,
+          updatedAt: new Date()
+        },
+        include: {
+          chartofaccount: true,
+          project: counterTransactionUpdate.projectId ? {
+            select: {
+              projectCode: true,
+              name: true
+            }
+          } : undefined
+        }
+      });
+
+      return { primary, counter };
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error updating double-entry transaction:', error);
     throw error;
   }
 };
@@ -261,8 +346,445 @@ const suggestCounterAccount = async (primaryAccountCode, transactionType) => {
   }
 };
 
+/**
+ * Find the counter transaction for a given transaction
+ * @param {number} transactionId - ID of the transaction
+ * @returns {Promise<Object|null>} - Counter transaction or null if not found
+ */
+const findCounterTransaction = async (transactionId) => {
+  try {
+    const transaction = await prisma.transaction.findUnique({
+      where: { id: transactionId }
+    });
+    
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+    
+    // Find transactions created at the same time (within 1 second)
+    const potentialCounters = await prisma.transaction.findMany({
+      where: {
+        id: { not: transactionId },
+        createdAt: {
+          gte: new Date(transaction.createdAt.getTime() - 1000),
+          lte: new Date(transaction.createdAt.getTime() + 1000)
+        },
+        amount: transaction.amount // Same amount
+      }
+    });
+    
+    // Look for a transaction with opposite type and matching description pattern
+    return potentialCounters.find(t => 
+      ((transaction.type === 'income' && t.type === 'expense') || 
+       (transaction.type === 'expense' && t.type === 'income')) &&
+      (t.description.includes('Counter entry for') || 
+       t.notes.includes('Counter transaction for'))
+    ) || null;
+  } catch (error) {
+    console.error('Error finding counter transaction:', error);
+    throw error;
+  }
+};
+
+/**
+ * Creates a journal entry (two transactions - debit and credit)
+ */
+async function createJournalEntry(
+  date,
+  description,
+  debitAccountCode,
+  creditAccountCode,
+  amount,
+  projectId = null
+) {
+  const now = new Date();
+  
+  // Start a transaction to ensure both entries are created or none
+  return await prisma.$transaction(async (tx) => {
+    // Create debit entry
+    const debitEntry = await tx.transaction.create({
+      data: {
+        date,
+        type: 'DEBIT',
+        accountCode: debitAccountCode,
+        description,
+        amount,
+        projectId,
+        updatedAt: now,
+      },
+    });
+
+    // Create credit entry
+    const creditEntry = await tx.transaction.create({
+      data: {
+        date,
+        type: 'CREDIT',
+        accountCode: creditAccountCode,
+        description,
+        amount,
+        projectId,
+        updatedAt: now,
+      },
+    });
+
+    logger.info('Journal entry created', { 
+      description, 
+      amount: amount.toString(),
+      debitAccount: debitAccountCode, 
+      creditAccount: creditAccountCode
+    });
+
+    return { debitEntry, creditEntry };
+  });
+}
+
+/**
+ * Find related journal entries for a billing or project cost
+ */
+async function findRelatedJournalEntries(entityType, entityId) {
+  // Format description to search for
+  const searchPattern = `${entityType} #${entityId}:`;
+
+  return await prisma.transaction.findMany({
+    where: {
+      description: {
+        startsWith: searchPattern,
+      },
+    },
+  });
+}
+
+/**
+ * Delete journal entries related to a specific entity
+ */
+async function deleteJournalEntries(entityType, entityId) {
+  const entries = await findRelatedJournalEntries(entityType, entityId);
+  
+  if (entries.length > 0) {
+    const entryIds = entries.map(entry => entry.id);
+    
+    logger.info('Deleting journal entries', { 
+      entityType, 
+      entityId, 
+      count: entries.length 
+    });
+    
+    return await prisma.transaction.deleteMany({
+      where: {
+        id: {
+          in: entryIds,
+        },
+      },
+    });
+  }
+  
+  return { count: 0 };
+}
+
+/**
+ * Creates journal entries for billing status changes
+ */
+async function createJournalEntryForBilling(billing, oldStatus) {
+  // Skip journal entry creation if flag is disabled
+  if (!billing.createJournalEntry) {
+    return null;
+  }
+  
+  const { id, projectId, billingDate, amount, status } = billing;
+  
+  // Get project details for better description
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+  });
+  
+  if (!project) {
+    throw new Error(`Project with ID ${projectId} not found`);
+  }
+  
+  // Determine revenue account based on project name or code
+  let revenueAccount = '4001'; // Default to Boring Service
+  if (project.name.toLowerCase().includes('sondir')) {
+    revenueAccount = '4002'; // Sondir Service
+  } else if (project.name.toLowerCase().includes('konsultasi')) {
+    revenueAccount = '4003'; // Consultation Service
+  }
+  
+  // Common description prefix
+  const descriptionPrefix = `Billing #${id}: ${project.name} (${project.projectCode})`;
+
+  try {
+    // If status is changing to unpaid: DR Piutang Usaha, CR Pendapatan Jasa
+    if (status === 'unpaid') {
+      // Check if entries already exist
+      const existingEntries = await findRelatedJournalEntries('Billing', id);
+      if (existingEntries.length > 0) {
+        // If we have existing entries for this billing, delete them first
+        await deleteJournalEntries('Billing', id);
+      }
+      
+      return await createJournalEntry(
+        billingDate,
+        `${descriptionPrefix} - Invoice Created`,
+        '1201', // Piutang Usaha
+        revenueAccount, // Pendapatan Jasa (based on project type)
+        amount,
+        projectId
+      );
+    }
+    
+    // If status is changing to paid: DR Kas/Bank, CR Piutang Usaha
+    else if (status === 'paid') {
+      // Default cash account
+      const cashAccount = '1101'; // Kas
+      
+      return await createJournalEntry(
+        new Date(), // Current date for payment
+        `${descriptionPrefix} - Payment Received`,
+        cashAccount, // Kas
+        '1201', // Piutang Usaha
+        amount,
+        projectId
+      );
+    }
+    
+    // If status is changing to rejected: Delete all journal entries
+    else if (status === 'rejected') {
+      return await deleteJournalEntries('Billing', id);
+    }
+  } catch (error) {
+    logger.error('Error creating journal entry for billing:', error);
+    throw error;
+  }
+  
+  return null;
+}
+
+/**
+ * Creates journal entries for project cost status changes
+ */
+async function createJournalEntryForProjectCost(projectCost, oldStatus) {
+  // Skip journal entry creation if flag is disabled
+  if (!projectCost.createJournalEntry) {
+    return null;
+  }
+  
+  const { id, projectId, date, category, description, amount, status } = projectCost;
+  
+  // Get project details for better description
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+  });
+  
+  if (!project) {
+    throw new Error(`Project with ID ${projectId} not found`);
+  }
+  
+  // Determine expense account based on category
+  let expenseAccount = '5105'; // Default to Other
+  switch (category.toLowerCase()) {
+    case 'material':
+      expenseAccount = '5101';
+      break;
+    case 'tenaga kerja':
+    case 'labor':
+      expenseAccount = '5102';
+      break;
+    case 'sewa peralatan':
+    case 'equipment rental':
+      expenseAccount = '5103';
+      break;
+    case 'transportasi':
+    case 'transportation':
+      expenseAccount = '5104';
+      break;
+    default:
+      expenseAccount = '5105'; // Other
+  }
+  
+  // Common description prefix
+  const descriptionPrefix = `ProjectCost #${id}: ${project.name} (${project.projectCode}) - ${category}`;
+
+  try {
+    // If status is changing to unpaid: DR Beban Proyek, CR Hutang Usaha
+    if (status === 'unpaid') {
+      // Check if entries already exist
+      const existingEntries = await findRelatedJournalEntries('ProjectCost', id);
+      if (existingEntries.length > 0) {
+        // If we have existing entries for this project cost, delete them first
+        await deleteJournalEntries('ProjectCost', id);
+      }
+      
+      return await createJournalEntry(
+        date,
+        `${descriptionPrefix} - Cost Recorded`,
+        expenseAccount, // Beban Proyek based on category
+        '2102', // Hutang Usaha
+        amount,
+        projectId
+      );
+    }
+    
+    // If status is changing to paid: DR Hutang Usaha, CR Kas/Bank
+    else if (status === 'paid') {
+      // Default cash account
+      const cashAccount = '1101'; // Kas
+      
+      return await createJournalEntry(
+        new Date(), // Current date for payment
+        `${descriptionPrefix} - Payment Made`,
+        '2102', // Hutang Usaha
+        cashAccount, // Kas
+        amount,
+        projectId
+      );
+    }
+    
+    // If status is changing to rejected: Delete all journal entries
+    else if (status === 'rejected') {
+      return await deleteJournalEntries('ProjectCost', id);
+    }
+  } catch (error) {
+    logger.error('Error creating journal entry for project cost:', error);
+    throw error;
+  }
+  
+  return null;
+}
+
+/**
+ * Record status change history for billing
+ */
+async function recordBillingStatusHistory(
+  billingId,
+  oldStatus,
+  newStatus,
+  changedBy = null,
+  notes = null
+) {
+  return await prisma.billing_status_history.create({
+    data: {
+      billingId,
+      oldStatus,
+      newStatus,
+      changedBy,
+      notes
+    }
+  });
+}
+
+/**
+ * Record status change history for project cost
+ */
+async function recordProjectCostStatusHistory(
+  projectCostId, 
+  oldStatus, 
+  newStatus, 
+  changedBy = null,
+  notes = null
+) {
+  return await prisma.projectcost_status_history.create({
+    data: {
+      projectCostId,
+      oldStatus,
+      newStatus,
+      changedBy,
+      notes
+    }
+  });
+}
+
+/**
+ * Find and delete transactions related to a billing by project code and description
+ */
+async function findAndDeleteBillingTransactions(billing) {
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: billing.projectId },
+      select: { projectCode: true, name: true }
+    });
+
+    if (!project) {
+      logger.warn(`Project not found for billing #${billing.id}`);
+      return { count: 0 };
+    }
+
+    // Find all transactions related to this billing with various search patterns
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        OR: [
+          // Search by billing ID
+          {
+            description: {
+              contains: `Billing #${billing.id}:`
+            }
+          },
+          // Search by invoice description with project code
+          {
+            description: {
+              contains: `Invoice for project ${project.projectCode}`
+            }
+          },
+          // Search by counter entry with project code
+          {
+            description: {
+              contains: `Counter entry for: Invoice for project ${project.projectCode}`
+            }
+          },
+          // Search by notes with billing ID
+          {
+            notes: {
+              contains: `Billing ID: ${billing.id}`
+            }
+          },
+          // Search by project name in description
+          {
+            description: {
+              contains: project.name
+            },
+            date: {
+              equals: new Date(billing.billingDate)
+            }
+          }
+        ]
+      }
+    });
+
+    if (transactions.length > 0) {
+      const transactionIds = transactions.map(t => t.id);
+      
+      logger.info(`Deleting ${transactions.length} transactions related to billing #${billing.id}`, {
+        billingId: billing.id,
+        projectCode: project.projectCode,
+        transactionIds
+      });
+      
+      return await prisma.transaction.deleteMany({
+        where: {
+          id: {
+            in: transactionIds
+          }
+        }
+      });
+    }
+    
+    return { count: 0 };
+  } catch (error) {
+    logger.error(`Error finding/deleting transactions for billing #${billing.id}`, { error });
+    throw error;
+  }
+}
+
 module.exports = {
   createDoubleEntryTransaction,
+  updateDoubleEntryTransaction,
   generateCounterTransaction,
-  suggestCounterAccount
+  suggestCounterAccount,
+  findCounterTransaction,
+  createJournalEntryForBilling,
+  createJournalEntryForProjectCost,
+  recordBillingStatusHistory,
+  recordProjectCostStatusHistory,
+  deleteJournalEntries,
+  findRelatedJournalEntries,
+  findAndDeleteBillingTransactions
 }; 

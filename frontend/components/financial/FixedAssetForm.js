@@ -32,6 +32,14 @@ import {
   StatHelpText,
   Alert,
   AlertIcon,
+  Checkbox,
+  Switch,
+  Accordion,
+  AccordionItem,
+  AccordionButton,
+  AccordionPanel,
+  AccordionIcon,
+  Heading,
 } from '@chakra-ui/react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
@@ -63,6 +71,11 @@ const FixedAssetForm = ({
     assetTag: '',
     accumulatedDepreciation: '0',
     bookValue: '0',
+    // New fields for accounting integration
+    fixedAssetAccountCode: '',
+    paymentAccountCode: '1102', // Default to Bank BCA
+    createAccountingEntry: true,
+    transactionDescription: '',
   };
 
   const [formData, setFormData] = useState(initialFormData);
@@ -71,6 +84,87 @@ const FixedAssetForm = ({
   const [showDepreciationFields, setShowDepreciationFields] = useState(false);
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+  const [accounts, setAccounts] = useState([]);
+  const [fixedAssetAccounts, setFixedAssetAccounts] = useState([]);
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
+
+  // Fetch accounts on component mount
+  useEffect(() => {
+    if (token && isAuthenticated) {
+      fetchAccounts();
+    }
+  }, [token, isAuthenticated]);
+
+  // Fetch chart of accounts
+  const fetchAccounts = async () => {
+    try {
+      const response = await axios.get('/api/accounts', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.data.success) {
+        const allAccounts = response.data.data || [];
+        setAccounts(allAccounts);
+
+        // Filter fixed asset accounts (15xx)
+        const assetAccounts = allAccounts.filter(account => 
+          account.code.startsWith('15')
+        );
+        setFixedAssetAccounts(assetAccounts);
+
+        // Filter payment accounts (cash and bank accounts)
+        const cashBankAccounts = allAccounts.filter(account => 
+          account.code.startsWith('11') && 
+          (account.category === 'Asset' || account.category === 'Cash' || account.category === 'Bank')
+        );
+        setPaymentAccounts(cashBankAccounts);
+
+        // Set default fixed asset account based on category
+        if (formData.category && assetAccounts.length > 0) {
+          const defaultAccount = getDefaultFixedAssetAccount(formData.category, assetAccounts);
+          setFormData(prev => ({
+            ...prev,
+            fixedAssetAccountCode: defaultAccount
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load chart of accounts',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    }
+  };
+
+  // Get default fixed asset account based on category
+  const getDefaultFixedAssetAccount = (category, accounts) => {
+    if (!accounts || accounts.length === 0) return '';
+
+    // Map category to account code pattern
+    const categoryMapping = {
+      'equipment': ['1501', '1502'],  // Mesin Boring, Mesin Sondir
+      'vehicle': ['1503'],           // Kendaraan Operasional
+      'building': ['1505'],          // Bangunan Kantor
+      'furniture': ['1504'],         // Peralatan Kantor
+    };
+
+    const codePatterns = categoryMapping[category] || ['1501']; // Default to Mesin Boring
+    
+    // Find matching account
+    for (const pattern of codePatterns) {
+      const matchingAccount = accounts.find(account => account.code === pattern);
+      if (matchingAccount) return matchingAccount.code;
+    }
+
+    // If no match found, return first fixed asset account
+    return accounts[0].code;
+  };
 
   // Set form data when editing an existing asset
   useEffect(() => {
@@ -91,17 +185,36 @@ const FixedAssetForm = ({
         assetTag: asset.assetTag || '',
         accumulatedDepreciation: asset.accumulatedDepreciation ? asset.accumulatedDepreciation.toString() : '0',
         bookValue: asset.bookValue ? asset.bookValue.toString() : '0',
+        // Accounting fields are disabled when editing
+        fixedAssetAccountCode: '',
+        paymentAccountCode: '1102',
+        createAccountingEntry: false,
+        transactionDescription: `Adjustment for ${asset.assetName}`,
       });
       
       // Show depreciation fields when editing
       setShowDepreciationFields(true);
     } else {
-      setFormData(initialFormData);
+      setFormData({
+        ...initialFormData,
+        transactionDescription: 'Purchase of fixed asset'
+      });
       setShowDepreciationFields(false);
     }
     
     setErrors({});
   }, [asset]);
+
+  // Update fixed asset account when category changes
+  useEffect(() => {
+    if (formData.category && fixedAssetAccounts.length > 0) {
+      const defaultAccount = getDefaultFixedAssetAccount(formData.category, fixedAssetAccounts);
+      setFormData(prev => ({
+        ...prev,
+        fixedAssetAccountCode: defaultAccount
+      }));
+    }
+  }, [formData.category, fixedAssetAccounts]);
 
   // Calculate book value when value or accumulated depreciation changes
   useEffect(() => {
@@ -125,6 +238,14 @@ const FixedAssetForm = ({
     // Clear error when field is edited
     if (errors[name]) {
       setErrors({ ...errors, [name]: null });
+    }
+
+    // Update transaction description when asset name changes
+    if (name === 'assetName' && !asset) {
+      setFormData(prev => ({
+        ...prev,
+        transactionDescription: `Purchase of fixed asset: ${value}`
+      }));
     }
   };
 
@@ -195,6 +316,21 @@ const FixedAssetForm = ({
         newErrors.accumulatedDepreciation = 'Accumulated depreciation cannot exceed the asset value';
       }
     }
+
+    // Validate accounting fields if creating accounting entry
+    if (formData.createAccountingEntry && !asset) {
+      if (!formData.fixedAssetAccountCode) {
+        newErrors.fixedAssetAccountCode = 'Fixed asset account is required';
+      }
+      
+      if (!formData.paymentAccountCode) {
+        newErrors.paymentAccountCode = 'Payment account is required';
+      }
+      
+      if (!formData.transactionDescription || formData.transactionDescription.trim() === '') {
+        newErrors.transactionDescription = 'Transaction description is required';
+      }
+    }
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -241,6 +377,15 @@ const FixedAssetForm = ({
       accumulatedDepreciation: parseFloat(formData.accumulatedDepreciation),
       bookValue: parseFloat(formData.bookValue),
     };
+
+    // Add accounting data if creating entry
+    if (formData.createAccountingEntry && !asset) {
+      assetData.accounting = {
+        fixedAssetAccountCode: formData.fixedAssetAccountCode,
+        paymentAccountCode: formData.paymentAccountCode,
+        transactionDescription: formData.transactionDescription
+      };
+    }
     
     try {
       let response;
@@ -256,18 +401,10 @@ const FixedAssetForm = ({
             },
           }
         );
-        
-        toast({
-          title: 'Asset Updated',
-          description: 'The asset has been successfully updated.',
-          status: 'success',
-          duration: 5000,
-          isClosable: true,
-        });
       } else {
         // Create new asset
         response = await axios.post(
-          `/api/assets`,
+          '/api/assets',
           assetData,
           {
             headers: {
@@ -275,30 +412,48 @@ const FixedAssetForm = ({
             },
           }
         );
-        
+      }
+      
+      if (response.data.success) {
         toast({
-          title: 'Asset Created',
-          description: 'The new asset has been successfully created.',
+          title: 'Success',
+          description: asset ? 'Asset updated successfully' : 'Asset created successfully',
           status: 'success',
+          duration: 3000,
+          isClosable: true,
+        });
+        
+        // Reset form
+        setFormData(initialFormData);
+        setErrors({});
+        
+        // Close modal and notify parent
+        onClose();
+        if (onSubmitSuccess) {
+          onSubmitSuccess();
+        }
+      } else {
+        toast({
+          title: 'Error',
+          description: response.data.message || 'Failed to save asset',
+          status: 'error',
           duration: 5000,
           isClosable: true,
         });
       }
+    } catch (error) {
+      console.error('Error saving asset:', error);
       
-      // Call success callback
-      if (onSubmitSuccess) {
-        onSubmitSuccess(response.data);
+      let errorMessage = 'Failed to save asset';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
       }
       
-      // Close modal
-      onClose();
-    } catch (error) {
-      console.error('Error submitting asset:', error);
-      
-      // Display error message
       toast({
         title: 'Error',
-        description: error.response?.data?.message || 'An error occurred while submitting the asset.',
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -308,167 +463,137 @@ const FixedAssetForm = ({
     }
   };
 
+  // Get account name by code
+  const getAccountName = (code) => {
+    const account = accounts.find(acc => acc.code === code);
+    return account ? `${account.name} (${account.code})` : code;
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader>
-          {asset ? 'Edit Fixed Asset' : 'Add New Fixed Asset'}
-        </ModalHeader>
+        <ModalHeader>{asset ? 'Edit Fixed Asset' : 'Add New Fixed Asset'}</ModalHeader>
         <ModalCloseButton />
-        
-        <form onSubmit={handleSubmit}>
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
-              {/* Asset Name */}
-              <FormControl isRequired isInvalid={errors.assetName}>
-                <FormLabel>Asset Name</FormLabel>
-                <Input
-                  name="assetName"
-                  value={formData.assetName}
-                  onChange={handleChange}
-                  placeholder="Enter asset name"
-                />
-                <FormErrorMessage>{errors.assetName}</FormErrorMessage>
-              </FormControl>
-              
-              {/* Category */}
-              <FormControl isRequired isInvalid={errors.category}>
-                <FormLabel>Category</FormLabel>
-                <Select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  placeholder="Select category"
-                >
-                  {ASSET_CATEGORIES.map(category => (
-                    <option key={category.value} value={category.value}>
-                      {category.label}
-                    </option>
-                  ))}
-                </Select>
-                <FormErrorMessage>{errors.category}</FormErrorMessage>
-              </FormControl>
-              
-              {/* Acquisition Date */}
-              <FormControl isRequired isInvalid={errors.acquisitionDate}>
-                <FormLabel>Acquisition Date</FormLabel>
-                <Input
-                  name="acquisitionDate"
-                  type="date"
-                  value={formData.acquisitionDate}
-                  onChange={handleChange}
-                />
-                <FormErrorMessage>{errors.acquisitionDate}</FormErrorMessage>
-              </FormControl>
-              
-              {/* Asset Value */}
-              <FormControl isRequired isInvalid={errors.value}>
-                <FormLabel>Asset Value</FormLabel>
-                <InputGroup>
-                  <InputLeftAddon>Rp</InputLeftAddon>
-                  <NumberInput
-                    min={0}
-                    value={formData.value}
-                    onChange={(valueString) => handleNumberChange('value', valueString)}
-                    width="100%"
-                  >
-                    <NumberInputField
-                      placeholder="Enter asset value"
-                      borderLeftRadius={0}
-                    />
-                    <NumberInputStepper>
-                      <NumberIncrementStepper />
-                      <NumberDecrementStepper />
-                    </NumberInputStepper>
-                  </NumberInput>
-                </InputGroup>
-                <FormErrorMessage>{errors.value}</FormErrorMessage>
-                <FormHelperText>
-                  The original acquisition cost of the asset
-                </FormHelperText>
-              </FormControl>
-              
-              {/* Useful Life */}
-              <FormControl isRequired isInvalid={errors.usefulLife}>
-                <FormLabel>Useful Life (years)</FormLabel>
+        <ModalBody>
+          <VStack spacing={4} align="stretch">
+            <FormControl isRequired isInvalid={errors.assetName}>
+              <FormLabel>Asset Name</FormLabel>
+              <Input
+                name="assetName"
+                value={formData.assetName}
+                onChange={handleChange}
+                placeholder="Enter asset name"
+              />
+              {errors.assetName && <FormErrorMessage>{errors.assetName}</FormErrorMessage>}
+            </FormControl>
+
+            <FormControl isRequired isInvalid={errors.category}>
+              <FormLabel>Category</FormLabel>
+              <Select
+                name="category"
+                value={formData.category}
+                onChange={handleChange}
+              >
+                {ASSET_CATEGORIES.map(category => (
+                  <option key={category.value} value={category.value}>
+                    {category.label}
+                  </option>
+                ))}
+              </Select>
+              {errors.category && <FormErrorMessage>{errors.category}</FormErrorMessage>}
+            </FormControl>
+
+            <FormControl isRequired isInvalid={errors.acquisitionDate}>
+              <FormLabel>Acquisition Date</FormLabel>
+              <Input
+                name="acquisitionDate"
+                type="date"
+                value={formData.acquisitionDate}
+                onChange={handleChange}
+              />
+              {errors.acquisitionDate && <FormErrorMessage>{errors.acquisitionDate}</FormErrorMessage>}
+            </FormControl>
+
+            <FormControl isRequired isInvalid={errors.value}>
+              <FormLabel>Value</FormLabel>
+              <InputGroup>
+                <InputLeftAddon>Rp</InputLeftAddon>
                 <NumberInput
-                  min={1}
-                  value={formData.usefulLife}
-                  onChange={(valueString) => handleNumberChange('usefulLife', valueString)}
+                  min={0}
+                  value={formData.value}
+                  onChange={(value) => handleNumberChange('value', value)}
+                  width="100%"
                 >
-                  <NumberInputField placeholder="Enter useful life in years" />
+                  <NumberInputField borderLeftRadius={0} placeholder="Enter asset value" />
                   <NumberInputStepper>
                     <NumberIncrementStepper />
                     <NumberDecrementStepper />
                   </NumberInputStepper>
                 </NumberInput>
-                <FormErrorMessage>{errors.usefulLife}</FormErrorMessage>
-                <FormHelperText>
-                  The estimated number of years the asset will be used
-                </FormHelperText>
-              </FormControl>
-              
-              {/* Description */}
-              <FormControl>
-                <FormLabel>Description</FormLabel>
-                <Input
-                  name="description"
-                  value={formData.description}
-                  onChange={handleChange}
-                  placeholder="Enter asset description (optional)"
-                />
-              </FormControl>
-              
-              {/* Location */}
-              <FormControl>
-                <FormLabel>Location</FormLabel>
-                <Input
-                  name="location"
-                  value={formData.location}
-                  onChange={handleChange}
-                  placeholder="Enter asset location (optional)"
-                />
-              </FormControl>
-              
-              {/* Asset Tag */}
-              <FormControl>
-                <FormLabel>Asset Tag</FormLabel>
-                <Input
-                  name="assetTag"
-                  value={formData.assetTag}
-                  onChange={handleChange}
-                  placeholder="Enter asset tag or serial number (optional)"
-                />
-              </FormControl>
-              
-              <Divider />
-              
-              {/* Toggle Depreciation Fields */}
-              <Box>
-                <Button
-                  size="sm"
-                  colorScheme="blue"
-                  variant="outline"
-                  onClick={toggleDepreciationFields}
-                >
-                  {showDepreciationFields
-                    ? 'Hide Depreciation Fields'
-                    : 'Show Depreciation Fields'}
-                </Button>
-              </Box>
-              
-              {/* Depreciation Fields */}
+              </InputGroup>
+              {errors.value && <FormErrorMessage>{errors.value}</FormErrorMessage>}
+            </FormControl>
+
+            <FormControl isRequired isInvalid={errors.usefulLife}>
+              <FormLabel>Useful Life (years)</FormLabel>
+              <NumberInput
+                min={1}
+                value={formData.usefulLife}
+                onChange={(value) => handleNumberChange('usefulLife', value)}
+              >
+                <NumberInputField placeholder="Enter useful life in years" />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
+              </NumberInput>
+              {errors.usefulLife && <FormErrorMessage>{errors.usefulLife}</FormErrorMessage>}
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Description</FormLabel>
+              <Input
+                name="description"
+                value={formData.description}
+                onChange={handleChange}
+                placeholder="Enter description (optional)"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Location</FormLabel>
+              <Input
+                name="location"
+                value={formData.location}
+                onChange={handleChange}
+                placeholder="Enter location (optional)"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Asset Tag</FormLabel>
+              <Input
+                name="assetTag"
+                value={formData.assetTag}
+                onChange={handleChange}
+                placeholder="Enter asset tag (optional)"
+              />
+            </FormControl>
+
+            <Box>
+              <Button
+                size="sm"
+                onClick={toggleDepreciationFields}
+                colorScheme={showDepreciationFields ? "blue" : "gray"}
+                variant="outline"
+                mb={2}
+              >
+                {showDepreciationFields ? "Hide Depreciation Fields" : "Show Depreciation Fields"}
+              </Button>
+
               {showDepreciationFields && (
-                <>
-                  <Alert status="info" borderRadius="md">
-                    <AlertIcon />
-                    <Text fontSize="sm">
-                      Enter the accumulated depreciation for an existing asset.
-                      For new assets, this should typically start at 0.
-                    </Text>
-                  </Alert>
-                  
+                <VStack spacing={4} align="stretch" mt={2} p={4} bg="gray.50" borderRadius="md">
                   <FormControl isInvalid={errors.accumulatedDepreciation}>
                     <FormLabel>Accumulated Depreciation</FormLabel>
                     <InputGroup>
@@ -477,59 +602,143 @@ const FixedAssetForm = ({
                         min={0}
                         max={parseFloat(formData.value) || 0}
                         value={formData.accumulatedDepreciation}
-                        onChange={(valueString) =>
-                          handleNumberChange('accumulatedDepreciation', valueString)
-                        }
+                        onChange={(value) => handleNumberChange('accumulatedDepreciation', value)}
                         width="100%"
                       >
-                        <NumberInputField
-                          placeholder="Enter accumulated depreciation"
-                          borderLeftRadius={0}
-                        />
+                        <NumberInputField borderLeftRadius={0} />
                         <NumberInputStepper>
                           <NumberIncrementStepper />
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
                     </InputGroup>
-                    <FormErrorMessage>
-                      {errors.accumulatedDepreciation}
-                    </FormErrorMessage>
+                    {errors.accumulatedDepreciation && <FormErrorMessage>{errors.accumulatedDepreciation}</FormErrorMessage>}
                   </FormControl>
-                  
-                  <Stat>
-                    <StatLabel>Current Book Value</StatLabel>
-                    <StatNumber>
-                      {formatCurrency(formData.bookValue)}
-                    </StatNumber>
-                    <StatHelpText>
-                      Asset Value - Accumulated Depreciation
-                    </StatHelpText>
-                  </Stat>
-                </>
+
+                  <FormControl>
+                    <FormLabel>Book Value</FormLabel>
+                    <InputGroup>
+                      <InputLeftAddon>Rp</InputLeftAddon>
+                      <Input
+                        value={formatCurrency(formData.bookValue).replace('Rp ', '')}
+                        isReadOnly
+                        bg="gray.100"
+                      />
+                    </InputGroup>
+                    <FormHelperText>Calculated automatically (Value - Accumulated Depreciation)</FormHelperText>
+                  </FormControl>
+                </VStack>
               )}
-            </VStack>
-          </ModalBody>
-          
-          <ModalFooter>
-            <Button
-              variant="ghost"
-              mr={3}
-              onClick={onClose}
-              isDisabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              type="submit"
-              isLoading={isSubmitting}
-              loadingText="Submitting"
-            >
-              {asset ? 'Update Asset' : 'Create Asset'}
-            </Button>
-          </ModalFooter>
-        </form>
+            </Box>
+
+            {/* Accounting Integration Section - Only show for new assets */}
+            {!asset && (
+              <Accordion allowToggle defaultIndex={[0]} mt={4}>
+                <AccordionItem>
+                  <h2>
+                    <AccordionButton>
+                      <Box as="span" flex='1' textAlign='left'>
+                        <Heading size="sm">Accounting Integration</Heading>
+                      </Box>
+                      <AccordionIcon />
+                    </AccordionButton>
+                  </h2>
+                  <AccordionPanel pb={4}>
+                    <VStack spacing={4} align="stretch">
+                      <FormControl display="flex" alignItems="center">
+                        <FormLabel htmlFor="create-accounting" mb="0">
+                          Create accounting entry
+                        </FormLabel>
+                        <Switch
+                          id="create-accounting"
+                          isChecked={formData.createAccountingEntry}
+                          onChange={() => setFormData(prev => ({
+                            ...prev,
+                            createAccountingEntry: !prev.createAccountingEntry
+                          }))}
+                        />
+                      </FormControl>
+
+                      {formData.createAccountingEntry && (
+                        <>
+                          <Alert status="info" borderRadius="md">
+                            <AlertIcon />
+                            This will create double-entry accounting transactions for this fixed asset
+                          </Alert>
+
+                          <FormControl isRequired isInvalid={errors.fixedAssetAccountCode}>
+                            <FormLabel>Fixed Asset Account (Debit)</FormLabel>
+                            <Select
+                              name="fixedAssetAccountCode"
+                              value={formData.fixedAssetAccountCode}
+                              onChange={handleChange}
+                            >
+                              <option value="">Select account</option>
+                              {fixedAssetAccounts.map(account => (
+                                <option key={account.code} value={account.code}>
+                                  {account.name} ({account.code})
+                                </option>
+                              ))}
+                            </Select>
+                            {errors.fixedAssetAccountCode && <FormErrorMessage>{errors.fixedAssetAccountCode}</FormErrorMessage>}
+                          </FormControl>
+
+                          <FormControl isRequired isInvalid={errors.paymentAccountCode}>
+                            <FormLabel>Payment Account (Credit)</FormLabel>
+                            <Select
+                              name="paymentAccountCode"
+                              value={formData.paymentAccountCode}
+                              onChange={handleChange}
+                            >
+                              <option value="">Select account</option>
+                              {paymentAccounts.map(account => (
+                                <option key={account.code} value={account.code}>
+                                  {account.name} ({account.code})
+                                </option>
+                              ))}
+                            </Select>
+                            {errors.paymentAccountCode && <FormErrorMessage>{errors.paymentAccountCode}</FormErrorMessage>}
+                          </FormControl>
+
+                          <FormControl isRequired isInvalid={errors.transactionDescription}>
+                            <FormLabel>Transaction Description</FormLabel>
+                            <Input
+                              name="transactionDescription"
+                              value={formData.transactionDescription}
+                              onChange={handleChange}
+                              placeholder="Enter transaction description"
+                            />
+                            {errors.transactionDescription && <FormErrorMessage>{errors.transactionDescription}</FormErrorMessage>}
+                          </FormControl>
+
+                          <Box p={3} bg="gray.50" borderRadius="md">
+                            <Text fontWeight="bold">Transaction Preview:</Text>
+                            <Text mt={2}>Debit: {getAccountName(formData.fixedAssetAccountCode)} {formData.value ? formatCurrency(formData.value) : ''}</Text>
+                            <Text>Credit: {getAccountName(formData.paymentAccountCode)} {formData.value ? formatCurrency(formData.value) : ''}</Text>
+                          </Box>
+                        </>
+                      )}
+                    </VStack>
+                  </AccordionPanel>
+                </AccordionItem>
+              </Accordion>
+            )}
+          </VStack>
+        </ModalBody>
+
+        <ModalFooter>
+          <Button variant="ghost" mr={3} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button 
+            colorScheme="blue" 
+            onClick={handleSubmit}
+            isLoading={isSubmitting}
+            loadingText={asset ? "Updating..." : "Saving..."}
+          >
+            {asset ? 'Update Asset' : 'Save Asset'}
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );

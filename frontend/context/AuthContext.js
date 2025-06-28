@@ -92,6 +92,7 @@ export const AuthProvider = ({ children }) => {
             const parsedUser = JSON.parse(storedUser);
             
             console.log('Found stored credentials, setting auth state');
+            console.log('User role from localStorage:', parsedUser.role);
             
             // Set auth state
             setToken(storedToken);
@@ -103,6 +104,7 @@ export const AuthProvider = ({ children }) => {
             axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
             
             console.log("Auth initialized from localStorage successfully");
+            console.log("isAdmin set to:", parsedUser.role === 'admin');
             
             // Verify token is still valid with a quick API call
             try {
@@ -187,6 +189,9 @@ export const AuthProvider = ({ children }) => {
 
       console.log('Login response:', response.status, response.statusText);
       const { token, user } = response.data;
+      
+      console.log('Login user data:', { ...user, password: undefined });
+      console.log('User role from login:', user.role);
 
       // Save to local storage
       localStorage.setItem('token', token);
@@ -197,6 +202,7 @@ export const AuthProvider = ({ children }) => {
       setUser(user);
       setIsAuthenticated(true);
       setIsAdmin(user.role === 'admin');
+      console.log('isAdmin set after login:', user.role === 'admin');
       setError(null);
 
       // Set authorization header for future requests
@@ -289,30 +295,110 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   // Logout function
-  const logout = useCallback(() => {
-    console.log('Logging out user');
-    
-    // Clear auth state
-    clearAuthState();
-    
-    // Show toast notification
-    toast({
-      title: 'Logged out',
-      description: 'You have been logged out successfully.',
-      status: 'info',
-      duration: 3000,
-      isClosable: true,
-    });
-    
-    // Redirect to login page
-    router.push('/login');
-  }, [router, toast, clearAuthState]);
+  const logout = async () => {
+    try {
+      // Call the logout API endpoint to invalidate token
+      if (token) {
+        await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/logout`, {}, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+      }
+      
+      // Clear all auth data regardless of API call success
+      setUser(null);
+      setToken(null);
+      setIsAuthenticated(false);
+      setIsAdmin(false);
+      
+      // Clear all localStorage items related to auth
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.clear(); // Clear all localStorage to prevent any auth data persistence
+      
+      // Remove authorization header
+      delete axios.defaults.headers.common['Authorization'];
+      
+      // Clear any token refresh timers
+      if (tokenRefreshTimer.current) {
+        clearTimeout(tokenRefreshTimer.current);
+        tokenRefreshTimer.current = null;
+      }
+      
+      // Show toast notification
+      toast({
+        title: 'Logged out',
+        description: 'You have been logged out successfully.',
+        status: 'info',
+        duration: 3000,
+        isClosable: true,
+      });
+      
+      // Force reload the page to clear any in-memory state
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Still clear local data even if API call fails
+      setUser(null);
+      setToken(null);
+      setIsAuthenticated(false);
+      setIsAdmin(false);
+      localStorage.clear();
+      delete axios.defaults.headers.common['Authorization'];
+      
+      if (tokenRefreshTimer.current) {
+        clearTimeout(tokenRefreshTimer.current);
+        tokenRefreshTimer.current = null;
+      }
+      
+      window.location.href = '/login';
+    }
+  };
 
   // Check if user has a specific role
   const hasRole = useCallback((role) => {
     if (!user) return false;
     return user.role === role || user.role === 'admin';
   }, [user]);
+  
+  // Check and update admin status with the server
+  const checkAdminStatus = useCallback(async () => {
+    if (!token || !isAuthenticated) return false;
+    
+    try {
+      console.log('Verifying admin status with server...');
+      const response = await axios.get('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      // Check if the response contains user data with role
+      if (response.data && response.data.user && response.data.user.role) {
+        const serverRole = response.data.user.role;
+        console.log('Server verified user role:', serverRole);
+        
+        // Update context if needed
+        if (serverRole === 'admin' && !isAdmin) {
+          console.log('Updating context with admin role from server');
+          setIsAdmin(true);
+          
+          // Update user object in context and localStorage
+          if (user) {
+            const updatedUser = { ...user, role: 'admin' };
+            setUser(updatedUser);
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+          }
+        }
+        
+        return serverRole === 'admin';
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error checking admin status:', error);
+      return false;
+    }
+  }, [token, isAuthenticated, user, isAdmin]);
 
   // Provide the context value
   const contextValue = {
@@ -326,7 +412,9 @@ export const AuthProvider = ({ children }) => {
     logout,
     register,
     validateToken,
-    clearAuthState
+    clearAuthState,
+    hasRole,
+    checkAdminStatus
   };
 
   return (

@@ -355,13 +355,13 @@ const ProjectProfitabilityPage = () => {
                   <Td>
                     <Box>
                       <Progress 
-                        value={project.progress || 0} 
+                        value={project.completion || 0} 
                         size="sm" 
                         colorScheme="blue"
                         borderRadius="full"
                       />
                       <Text fontSize="xs" mt={1} textAlign="right">
-                        {formatPercentage(project.progress || 0)}
+                        {formatPercentage(project.completion || 0)}
                       </Text>
                     </Box>
                   </Td>

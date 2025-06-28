@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useRef, useCallback } from 'react';
+
 import {
   Box,
   Heading,
@@ -14,6 +16,8 @@ import {
   Text,
   Alert,
   AlertIcon,
+  AlertTitle,
+  AlertDescription,
   Badge,
   Stat,
   StatLabel,
@@ -43,21 +47,51 @@ import {
   List,
   ListItem,
   ListIcon,
+  UnorderedList,
+  Grid,
+  GridItem,
+  Spinner,
 } from '@chakra-ui/react';
+
 import { useRouter } from 'next/router';
+
 import { FiArrowLeft, FiInfo, FiRefreshCw } from 'react-icons/fi';
+
 import { useAuth } from '../../context/AuthContext';
+
 import ProtectedRoute from '../../components/auth/ProtectedRoute';
+
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+
 import ErrorAlert from '../../components/common/ErrorAlert';
+
 import EmptyState from '../../components/common/EmptyState';
+
 import WIPExportButton from '../../components/common/WIPExportButton';
+
+import WipTrendChart from '../../components/wip/WipTrendChart';
+
+import WipAgingChart from '../../components/wip/WipAgingChart';
+
+import WipCashflowProjection from '../../components/wip/WipCashflowProjection';
+
+import WipRiskAnalysis from '../../components/wip/WipRiskAnalysis';
+
+import { format } from 'date-fns';
+
 import api from '../../config/api';
+
 import React from 'react';
+
+import { FaSync } from 'react-icons/fa';
+
+import ProjectsTable from '../../components/projects/ProjectsTable';
 
 const WIPReportPage = () => {
   const router = useRouter();
+
   const [wipData, setWipData] = useState([]);
+
   const [wipSummary, setWipSummary] = useState({
     totalProjects: 0,
     projectsWithWip: 0,
@@ -65,6 +99,7 @@ const WIPReportPage = () => {
     totalBilled: 0,
     totalWip: 0,
   });
+
   const [wipAnalysis, setWipAnalysis] = useState({
     byAge: [],
     byClient: [],
@@ -75,13 +110,22 @@ const WIPReportPage = () => {
       changePercentage: 0
     }
   });
+
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState(null);
+
   const [selectedStatus, setSelectedStatus] = useState('ongoing');
+
   const [isRecalculating, setIsRecalculating] = useState(false);
+
   const { token, isAuthenticated } = useAuth();
+
   const toast = useToast();
+
   const cardBg = useColorModeValue('white', 'gray.700');
+
+  const [projects, setProjects] = useState([]);
 
   // Format currency
   const formatCurrency = (amount) => {
@@ -338,6 +382,45 @@ const WIPReportPage = () => {
     }
   };
 
+  // Fetch WIP projects
+  useEffect(() => {
+    const fetchWIPProjects = async () => {
+      setLoading(true);
+      try {
+        const response = await api.get('/api/wip/projects');
+        setProjects(response.data);
+      } catch (error) {
+        console.error('Error fetching WIP projects:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to fetch WIP projects',
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchWIPProjects();
+  }, [toast]);
+
+  // Calculate summary statistics
+  const calculateSummary = () => {
+    if (!projects.length) return { totalWIP: 0, totalProjects: 0, averageWIP: 0 };
+    
+    const totalWIP = projects.reduce((sum, project) => sum + (project.wipValue || 0), 0);
+    const totalProjects = projects.length;
+    const averageWIP = totalProjects ? totalWIP / totalProjects : 0;
+    
+    return { totalWIP, totalProjects, averageWIP };
+  };
+
+  const summary = calculateSummary();
+
+  const bgColor = useColorModeValue('white', 'gray.700');
+
   return (
     <Box p={4}>
       <Flex justify="space-between" align="center" mb={6}>
@@ -365,7 +448,7 @@ const WIPReportPage = () => {
           <Button
             colorScheme="purple"
             size="sm"
-            leftIcon={<FiRefreshCw />}
+            leftIcon={<FaSync />}
             onClick={recalculateAllWip}
             isLoading={isRecalculating}
             loadingText="Recalculating"
@@ -444,279 +527,75 @@ const WIPReportPage = () => {
         </Stat>
       </SimpleGrid>
 
-      {/* WIP Method Explanation */}
-      <Box mb={6} p={4} bg={cardBg} borderRadius="md" shadow="sm">
-        <Flex align="center" mb={2}>
-          <FiInfo size="20px" color="blue.500" />
-          <Heading size="sm" ml={2}>WIP Calculation Method</Heading>
-        </Flex>
-        <Text fontSize="sm">
-          Work In Progress (WIP) is calculated using the <strong>Earned Value Method</strong>: 
-          WIP = Earned Value - Amount Billed. Earned Value is determined by multiplying the 
-          project's percentage of completion by the total contract value.
-        </Text>
-      </Box>
-
       {error && <ErrorAlert message={error} />}
 
       {loading ? (
-        <LoadingSpinner text="Loading WIP data..." />
+        <Flex justify="center" align="center" h="300px">
+          <Spinner size="xl" color="purple.500" />
+        </Flex>
       ) : wipData.length === 0 ? (
         <EmptyState 
           title="No WIP data found" 
           message={`There are no ${selectedStatus === 'all' ? '' : selectedStatus} projects with WIP values.`}
         />
       ) : (
-        <Tabs variant="enclosed" colorScheme="purple">
+        <Tabs colorScheme="purple" variant="enclosed-colored">
           <TabList>
             <Tab>Projects</Tab>
             <Tab>Analysis</Tab>
+            <Tab>Visualization</Tab>
+            <Tab>Projections</Tab>
           </TabList>
-
+          
           <TabPanels>
             {/* Projects Tab */}
-            <TabPanel>
-              <Box overflowX="auto">
-                <Table variant="simple" bg={cardBg} shadow="sm">
-                  <Thead>
-                    <Tr>
-                      <Th>Project</Th>
-                      <Th>Client</Th>
-                      <Th>Status</Th>
-                      <Th isNumeric>Total Value</Th>
-                      <Th isNumeric>Costs to Date</Th>
-                      <Th isNumeric>Billed to Date</Th>
-                      <Th isNumeric>WIP Value</Th>
-                      <Th>Completion</Th>
-                      <Th>Actions</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {wipData.map((project) => (
-                      <Tr key={project.id}>
-                        <Td fontWeight="medium">{project.name}</Td>
-                        <Td>{project.client?.name || 'N/A'}</Td>
-                        <Td>
-                          <Badge colorScheme={
-                            project.status === 'ongoing' ? 'green' : 
-                            project.status === 'completed' ? 'blue' : 
-                            project.status === 'cancelled' ? 'red' : 'gray'
-                          }>
-                            {project.status.charAt(0).toUpperCase() + project.status.slice(1)}
-                          </Badge>
-                        </Td>
-                        <Td isNumeric>{formatCurrency(project.totalValue)}</Td>
-                        <Td isNumeric color="red.500">{formatCurrency(project.costs)}</Td>
-                        <Td isNumeric color="blue.500">{formatCurrency(project.billed)}</Td>
-                        <Td 
-                          isNumeric 
-                          fontWeight="semibold"
-                          color="purple.500"
-                        >
-                          <Popover trigger="hover" placement="top">
-                            <PopoverTrigger>
-                              <Text cursor="pointer">{formatCurrency(project.wipValue)}</Text>
-                            </PopoverTrigger>
-                            <PopoverContent>
-                              <PopoverArrow />
-                              <PopoverCloseButton />
-                              <PopoverHeader fontWeight="bold">WIP Calculation</PopoverHeader>
-                              <PopoverBody>
-                                <List spacing={1} fontSize="sm">
-                                  <ListItem>
-                                    <Flex justify="space-between">
-                                      <Text>Project Value:</Text>
-                                      <Text fontWeight="medium">{formatCurrency(project.totalValue)}</Text>
-                                    </Flex>
-                                  </ListItem>
-                                  <ListItem>
-                                    <Flex justify="space-between">
-                                      <Text>Completion %:</Text>
-                                      <Text fontWeight="medium">{formatPercentage(project.completionPercentage || project.progress || 0)}</Text>
-                                    </Flex>
-                                  </ListItem>
-                                  <ListItem>
-                                    <Flex justify="space-between">
-                                      <Text>Earned Value:</Text>
-                                      <Text fontWeight="medium">{formatCurrency(project.earnedValue || (project.totalValue * (project.completionPercentage || project.progress || 0) / 100))}</Text>
-                                    </Flex>
-                                  </ListItem>
-                                  <ListItem>
-                                    <Flex justify="space-between">
-                                      <Text>Billed to Date:</Text>
-                                      <Text fontWeight="medium">{formatCurrency(project.billed)}</Text>
-                                    </Flex>
-                                  </ListItem>
-                                  <Divider my={2} />
-                                  <ListItem>
-                                    <Flex justify="space-between">
-                                      <Text>WIP Value:</Text>
-                                      <Text fontWeight="bold" color="purple.500">
-                                        {formatCurrency(project.wipValue)}
-                                      </Text>
-                                    </Flex>
-                                  </ListItem>
-                                </List>
-                              </PopoverBody>
-                            </PopoverContent>
-                          </Popover>
-                        </Td>
-                        <Td>
-                          <Box>
-                            <Tooltip label={`${formatPercentage(project.progress || 0)} complete`}>
-                              <Progress 
-                                value={project.progress || 0} 
-                                size="sm" 
-                                colorScheme="blue"
-                                borderRadius="full"
-                              />
-                            </Tooltip>
-                            <Text fontSize="xs" mt={1} textAlign="right">
-                              {formatPercentage(project.progress || 0)}
-                            </Text>
-                          </Box>
-                        </Td>
-                        <Td>
-                          <Button
-                            size="xs"
-                            colorScheme="blue"
-                            variant="outline"
-                            onClick={() => viewProjectDetails(project.id)}
-                          >
-                            Details
-                          </Button>
-                          <Button
-                            size="xs"
-                            colorScheme="purple"
-                            variant="ghost"
-                            ml={2}
-                            onClick={() => recalculateProjectWip(project.id)}
-                          >
-                            Recalc
-                          </Button>
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
+            <TabPanel p={0} pt={4}>
+              <Grid templateColumns="repeat(3, 1fr)" gap={4} mb={6}>
+                <GridItem>
+                  <Box bg={bgColor} p={4} borderRadius="md" shadow="sm">
+                    <Text fontSize="sm" color="gray.500">Total WIP Value</Text>
+                    <Text fontSize="2xl" fontWeight="bold">{formatCurrency(summary.totalWIP)}</Text>
+                  </Box>
+                </GridItem>
+                <GridItem>
+                  <Box bg={bgColor} p={4} borderRadius="md" shadow="sm">
+                    <Text fontSize="sm" color="gray.500">Total Projects</Text>
+                    <Text fontSize="2xl" fontWeight="bold">{summary.totalProjects}</Text>
+                  </Box>
+                </GridItem>
+                <GridItem>
+                  <Box bg={bgColor} p={4} borderRadius="md" shadow="sm">
+                    <Text fontSize="sm" color="gray.500">Average WIP per Project</Text>
+                    <Text fontSize="2xl" fontWeight="bold">{formatCurrency(summary.averageWIP)}</Text>
+                  </Box>
+                </GridItem>
+              </Grid>
+              
+              <ProjectsTable 
+                projects={projects} 
+                formatCurrency={formatCurrency}
+              />
+            </TabPanel>
+            
+            {/* Analysis Tab */}
+            <TabPanel p={0} pt={4}>
+              <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={4}>
+                <WipAgingChart formatCurrency={formatCurrency} />
+                <WipRiskAnalysis formatCurrency={formatCurrency} />
+              </SimpleGrid>
+            </TabPanel>
+            
+            {/* Visualization Tab */}
+            <TabPanel p={0} pt={4}>
+              <Box mb={6}>
+                <WipTrendChart formatCurrency={formatCurrency} />
               </Box>
             </TabPanel>
-
-            {/* Analysis Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>WIP Analysis</Heading>
-                
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6}>
-                  {/* WIP by Age */}
-                  <Box p={4} borderWidth="1px" borderRadius="md">
-                    <Heading size="sm" mb={3}>WIP by Age</Heading>
-                    <Table variant="simple" size="sm">
-                      <Thead>
-                        <Tr>
-                          <Th>Age</Th>
-                          <Th isNumeric>Amount</Th>
-                          <Th isNumeric>% of Total</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {(wipAnalysis?.byAge || []).map((item, index) => (
-                          <Tr key={index}>
-                            <Td>{item.age}</Td>
-                            <Td isNumeric>{formatCurrency(item.amount)}</Td>
-                            <Td isNumeric>{item.percent}%</Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
-                  
-                  {/* WIP by Client */}
-                  <Box p={4} borderWidth="1px" borderRadius="md">
-                    <Heading size="sm" mb={3}>Top Clients by WIP</Heading>
-                    <Table variant="simple" size="sm">
-                      <Thead>
-                        <Tr>
-                          <Th>Client</Th>
-                          <Th isNumeric>WIP Amount</Th>
-                          <Th isNumeric>% of Total</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {(wipAnalysis?.byClient || []).map((client, index) => (
-                          <Tr key={index}>
-                            <Td>{client.name}</Td>
-                            <Td isNumeric>{formatCurrency(client.wipValue)}</Td>
-                            <Td isNumeric>
-                              {formatPercentage(client.percent || 0)}
-                            </Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
-                  
-                  {/* WIP Risk Assessment */}
-                  <Box p={4} borderWidth="1px" borderRadius="md">
-                    <Heading size="sm" mb={3}>WIP Risk Assessment</Heading>
-                    <Table variant="simple" size="sm">
-                      <Thead>
-                        <Tr>
-                          <Th>Risk Level</Th>
-                          <Th>Description</Th>
-                          <Th isNumeric>Amount</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {(wipAnalysis?.riskAssessment || []).map((risk, index) => (
-                          <Tr key={index}>
-                            <Td>
-                              <Badge colorScheme={
-                                risk.level === 'Low' ? 'green' : 
-                                risk.level === 'Medium' ? 'yellow' : 
-                                risk.level === 'High' ? 'red' : 'gray'
-                              }>
-                                {risk.level}
-                              </Badge>
-                            </Td>
-                            <Td>{risk.description}</Td>
-                            <Td isNumeric>{formatCurrency(risk.amount)}</Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
-                  
-                  {/* WIP Trends */}
-                  <Box p={4} borderWidth="1px" borderRadius="md">
-                    <Heading size="sm" mb={3}>WIP Trends</Heading>
-                    <Alert status="info" borderRadius="md">
-                      <AlertIcon />
-                      <Text fontSize="sm">
-                        WIP has {wipAnalysis?.trends?.changePercentage > 0 ? 'increased' : 'decreased'} by {Math.abs(wipAnalysis?.trends?.changePercentage || 0).toFixed(1)}% compared to the previous month. 
-                        {wipAnalysis?.trends?.changePercentage > 0 
-                          ? ' Consider accelerating billing cycles to improve cash flow.'
-                          : ' Good job managing your WIP balance.'}
-                      </Text>
-                    </Alert>
-                    <Divider my={3} />
-                    <Flex justify="space-between" align="center">
-                      <Text fontWeight="medium">Last Month:</Text>
-                      <Text>{formatCurrency(wipAnalysis?.trends?.previousMonth)}</Text>
-                    </Flex>
-                    <Flex justify="space-between" align="center" mt={2}>
-                      <Text fontWeight="medium">Current:</Text>
-                      <Text fontWeight="bold">{formatCurrency(wipAnalysis?.trends?.currentMonth)}</Text>
-                    </Flex>
-                    <Flex justify="space-between" align="center" mt={2}>
-                      <Text fontWeight="medium">Change:</Text>
-                      <Text color={wipAnalysis?.trends?.changePercentage > 0 ? "red.500" : "green.500"}>
-                        {wipAnalysis?.trends?.changePercentage > 0 ? '+' : ''}
-                        {wipAnalysis?.trends?.changePercentage.toFixed(1)}%
-                      </Text>
-                    </Flex>
-                  </Box>
-                </SimpleGrid>
+            
+            {/* Projections Tab */}
+            <TabPanel p={0} pt={4}>
+              <Box mb={6}>
+                <WipCashflowProjection formatCurrency={formatCurrency} />
               </Box>
             </TabPanel>
           </TabPanels>
@@ -734,3 +613,4 @@ const ProtectedWIPReportPage = () => (
 );
 
 export default ProtectedWIPReportPage; 
+

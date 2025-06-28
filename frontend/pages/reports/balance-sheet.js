@@ -345,38 +345,73 @@ const BalanceSheetPage = () => {
     // Assets data
     const assetsData = [];
     try {
-      Object.entries(balanceSheet.assets || {}).forEach(([category, assets]) => {
-        if (Array.isArray(assets)) {
-          // Handle array-style assets (like Fixed Assets, WIP)
-          assets.forEach(asset => {
+      // Current Assets
+      if (balanceSheet.assets.current) {
+        Object.entries(balanceSheet.assets.current).forEach(([category, accounts]) => {
+          if (Array.isArray(accounts)) {
+            accounts.forEach(account => {
             assetsData.push({
               Section: 'Assets',
-              Category: category,
-              AccountCode: asset.code || '',
-              AccountName: asset.name || '',
-              Balance: asset.balance || asset.bookValue || asset.wipValue || 0,
-              'Balance (Formatted)': formatCurrency(asset.balance || asset.bookValue || asset.wipValue || 0)
+                Category: 'Current Assets',
+                SubCategory: category,
+                AccountCode: account.code || '',
+                AccountName: account.name || '',
+                Balance: account.balance || 0,
+                'Balance (Formatted)': formatCurrency(account.balance || 0)
             });
           });
-        } else if (typeof assets === 'object') {
-          // Handle nested structure (current/nonCurrent)
-          Object.entries(assets).forEach(([subCategory, subCategoryAssets]) => {
-            Object.entries(subCategoryAssets).forEach(([subSubCategory, accounts]) => {
-              accounts.forEach(asset => {
+          }
+        });
+      }
+      
+      // Fixed Assets
+      if (balanceSheet.assets.fixed) {
+        Object.entries(balanceSheet.assets.fixed).forEach(([category, accounts]) => {
+          if (Array.isArray(accounts)) {
+            accounts.forEach(account => {
                 assetsData.push({
                   Section: 'Assets',
-                  Category: `${category} - ${subCategory}`,
-                  SubCategory: subSubCategory,
-                  AccountCode: asset.code || '',
-                  AccountName: asset.name || '',
-                  Balance: asset.balance || 0,
-                  'Balance (Formatted)': formatCurrency(asset.balance || 0)
+                Category: 'Fixed Assets',
+                SubCategory: category,
+                AccountCode: account.code || '',
+                AccountName: account.name || '',
+                Balance: account.balance || 0,
+                'Balance (Formatted)': formatCurrency(account.balance || 0)
                 });
               });
+          }
+        });
+      }
+      
+      // Contra Assets
+      if (balanceSheet.assets.contra && Array.isArray(balanceSheet.assets.contra)) {
+        balanceSheet.assets.contra.forEach(account => {
+          assetsData.push({
+            Section: 'Assets',
+            Category: 'Contra Assets',
+            SubCategory: 'Accumulated Depreciation',
+            AccountCode: account.code || '',
+            AccountName: account.name || '',
+            Balance: account.balance || 0,
+            'Balance (Formatted)': formatCurrency(account.balance || 0)
             });
           });
         }
-      });
+      
+      // WIP Items
+      if (balanceSheet.assets.wipItems && Array.isArray(balanceSheet.assets.wipItems)) {
+        balanceSheet.assets.wipItems.forEach(item => {
+          assetsData.push({
+            Section: 'Assets',
+            Category: 'Current Assets',
+            SubCategory: 'Work In Progress',
+            AccountCode: item.projectCode || '',
+            AccountName: item.name || '',
+            Balance: item.wipValue || 0,
+            'Balance (Formatted)': formatCurrency(item.wipValue || 0)
+          });
+        });
+      }
     } catch (error) {
       console.error('Error processing assets for export:', error);
     }
@@ -384,38 +419,43 @@ const BalanceSheetPage = () => {
     // Liabilities data
     const liabilitiesData = [];
     try {
-      Object.entries(balanceSheet.liabilities || {}).forEach(([category, liabilities]) => {
-        if (Array.isArray(liabilities)) {
-          // Handle array-style liabilities
-          liabilities.forEach(liability => {
+      // Current Liabilities
+      if (balanceSheet.liabilities.current) {
+        Object.entries(balanceSheet.liabilities.current).forEach(([category, accounts]) => {
+          if (Array.isArray(accounts)) {
+            accounts.forEach(account => {
             liabilitiesData.push({
               Section: 'Liabilities',
-              Category: category,
-              AccountCode: liability.code || '',
-              AccountName: liability.name || '',
-              Balance: liability.balance || 0,
-              'Balance (Formatted)': formatCurrency(liability.balance || 0)
+                Category: 'Current Liabilities',
+                SubCategory: category,
+                AccountCode: account.code || '',
+                AccountName: account.name || '',
+                Balance: account.balance || 0,
+                'Balance (Formatted)': formatCurrency(account.balance || 0)
             });
           });
-        } else if (typeof liabilities === 'object') {
-          // Handle nested structure (current/nonCurrent)
-          Object.entries(liabilities).forEach(([subCategory, subCategoryLiabilities]) => {
-            Object.entries(subCategoryLiabilities).forEach(([subSubCategory, accounts]) => {
-              accounts.forEach(liability => {
+          }
+        });
+      }
+      
+      // Non-Current Liabilities
+      if (balanceSheet.liabilities.nonCurrent) {
+        Object.entries(balanceSheet.liabilities.nonCurrent).forEach(([category, accounts]) => {
+          if (Array.isArray(accounts)) {
+            accounts.forEach(account => {
                 liabilitiesData.push({
                   Section: 'Liabilities',
-                  Category: `${category} - ${subCategory}`,
-                  SubCategory: subSubCategory,
-                  AccountCode: liability.code || '',
-                  AccountName: liability.name || '',
-                  Balance: liability.balance || 0,
-                  'Balance (Formatted)': formatCurrency(liability.balance || 0)
-                });
-              });
+                Category: 'Non-Current Liabilities',
+                SubCategory: category,
+                AccountCode: account.code || '',
+                AccountName: account.name || '',
+                Balance: account.balance || 0,
+                'Balance (Formatted)': formatCurrency(account.balance || 0)
             });
           });
         }
       });
+      }
     } catch (error) {
       console.error('Error processing liabilities for export:', error);
     }
@@ -423,21 +463,36 @@ const BalanceSheetPage = () => {
     // Equity data
     const equityData = [];
     try {
-      Object.entries(balanceSheet.equity || {}).forEach(([category, subcategories]) => {
-        Object.entries(subcategories).forEach(([subcategory, equities]) => {
-          equities.forEach(equity => {
+      if (balanceSheet.equity) {
+        Object.entries(balanceSheet.equity).forEach(([category, accounts]) => {
+          if (Array.isArray(accounts)) {
+            accounts.forEach(account => {
             equityData.push({
               Section: 'Equity',
-              Category: category,
-              SubCategory: subcategory,
-              AccountCode: equity.code || '',
-              AccountName: equity.name || '',
-              Balance: equity.balance || 0,
-              'Balance (Formatted)': formatCurrency(equity.balance || 0)
+                Category: 'Equity',
+                SubCategory: category,
+                AccountCode: account.code || '',
+                AccountName: account.name || '',
+                Balance: account.balance || 0,
+                'Balance (Formatted)': formatCurrency(account.balance || 0)
             });
           });
+          }
         });
-      });
+        
+        // Add Net Income
+        if (balanceSheet.summary && balanceSheet.summary.netIncome !== undefined) {
+          equityData.push({
+            Section: 'Equity',
+            Category: 'Equity',
+            SubCategory: 'Net Income',
+            AccountCode: '',
+            AccountName: 'Net Income (Current Period)',
+            Balance: balanceSheet.summary.netIncome || 0,
+            'Balance (Formatted)': formatCurrency(balanceSheet.summary.netIncome || 0)
+          });
+        }
+      }
     } catch (error) {
       console.error('Error processing equity for export:', error);
     }
@@ -472,25 +527,17 @@ const BalanceSheetPage = () => {
         Section: 'Summary',
         Category: 'Total',
         AccountCode: '',
-        AccountName: 'Net Income',
-        Balance: totals.netIncome,
-        'Balance (Formatted)': formatCurrency(totals.netIncome)
-      },
-      {
-        Section: 'Summary',
-        Category: 'Total',
-        AccountCode: '',
-        AccountName: 'Total Equity with Income',
-        Balance: totals.totalEquityWithIncome,
-        'Balance (Formatted)': formatCurrency(totals.totalEquityWithIncome)
-      },
-      {
-        Section: 'Summary',
-        Category: 'Total',
-        AccountCode: '',
         AccountName: 'Total Liabilities and Equity',
         Balance: totals.totalLiabilitiesAndEquity,
         'Balance (Formatted)': formatCurrency(totals.totalLiabilitiesAndEquity)
+      },
+      {
+        Section: 'Summary',
+        Category: 'Balance Status',
+        AccountCode: '',
+        AccountName: balanceStatus.isBalanced ? '✅ Seimbang' : '❌ Tidak Seimbang',
+        Balance: balanceStatus.isBalanced ? 0 : Math.abs((balanceSheet.summary && balanceSheet.summary.difference) || 0),
+        'Balance (Formatted)': balanceStatus.isBalanced ? '-' : formatCurrency(Math.abs((balanceSheet.summary && balanceSheet.summary.difference) || 0))
       }
     ];
     
@@ -509,852 +556,493 @@ const BalanceSheetPage = () => {
 
   // Render asset categories and accounts
   const renderAssets = () => {
-    if (!balanceSheet || !balanceSheet.assets) return null;
+    if (!balanceSheet || !balanceSheet.assets) {
+      return <EmptyState message="No asset data available" />;
+    }
+
+    // Add default empty objects for each destructured property
+    const { 
+      current = {}, 
+      fixed = {}, 
+      contra = [], 
+      wipItems = [] 
+    } = balanceSheet.assets;
+    
+    const { 
+      totalCurrentAssets = 0, 
+      totalFixedAssets = 0, 
+      totalContraAssets = 0, 
+      totalAssets = 0 
+    } = balanceSheet.summary || {};
     
     return (
-      <>
-        {/* Current Assets */}
-        <Box mb={6}>
-          <Heading as="h3" size="md" mb={3} color="blue.600" borderBottom="1px" borderColor="gray.200" pb={2}>
+      <Box>
+        <Heading as="h3" size="md" mb={4} color="blue.600">
+          1. ASSETS (Aset)
+          </Heading>
+          
+        {/* Current Assets Section */}
+        <Box ml={4} mb={6}>
+          <Heading as="h4" size="sm" mb={3}>
             Current Assets
-          </Heading>
-          
-          {balanceSheet.assets.current && Object.entries(balanceSheet.assets.current).map(([category, subcategories]) => (
-            <Box key={category} mb={4}>
-              <Heading as="h4" size="sm" mb={2} color="gray.600">
-                {category}
               </Heading>
               
-              {Object.entries(subcategories).map(([subcategory, accounts]) => (
-                <Box key={`${category}-${subcategory}`} mb={3} ml={4}>
-                  {subcategory !== 'General' && (
-                    <Text fontWeight="medium" color="gray.500" mb={1}>
-                      {subcategory}
-                    </Text>
-                  )}
-                  
-                  <Table size="sm" variant="simple">
+          <Table size="sm" variant="simple" mb={4}>
                     <Thead>
-                      <Tr>
+              <Tr bg="gray.50">
                         <Th>Account</Th>
                         <Th isNumeric>Balance</Th>
                       </Tr>
                     </Thead>
                     <Tbody>
-                      {accounts.map(account => (
-                        <Tr key={account.code || `account-${Math.random()}`}>
-                          <Td>{account.name}</Td>
-                          <Td isNumeric>{formatCurrency(account.balance || 0)}</Td>
+              {/* Kas */}
+              {current['Kas'] && current['Kas'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Kas'][0].name} ({current['Kas'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Kas'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* Bank */}
+              {current['Bank'] && current['Bank'].length > 0 && (
+                <>
+                  <Tr>
+                    <Td fontWeight="medium" colSpan={2}>Bank:</Td>
+                  </Tr>
+                  {current['Bank'].map(account => (
+                    <Tr key={account.code}>
+                      <Td pl={8}>{account.name} ({account.code})</Td>
+                      <Td isNumeric>{formatCurrency(account.balance)}</Td>
                         </Tr>
                       ))}
+                </>
+              )}
+
+              {/* Piutang Usaha */}
+              {current['Piutang Usaha'] && current['Piutang Usaha'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Piutang Usaha'][0].name} ({current['Piutang Usaha'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Piutang Usaha'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* WIP */}
+              {current['WIP'] && current['WIP'].length > 0 ? (
+                <Tr>
+                  <Td fontWeight="medium">{current['WIP'][0].name} ({current['WIP'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['WIP'][0].balance)}</Td>
+                </Tr>
+              ) : wipItems && wipItems.length > 0 ? (
+                <Tr>
+                  <Td fontWeight="medium">Pekerjaan Dalam Proses (WIP)</Td>
+                  <Td isNumeric>{formatCurrency(wipItems.reduce((sum, item) => sum + item.wipValue, 0))}</Td>
+                </Tr>
+              ) : null}
                     </Tbody>
                     <Tfoot>
-                      <Tr bg="gray.50">
-                        <Td fontWeight="semibold">{subcategory !== 'General' ? `Subtotal - ${subcategory}` : `Subtotal - ${category}`}</Td>
-                        <Td isNumeric fontWeight="semibold">
-                          {formatCurrency(accounts.reduce((sum, account) => sum + (account.balance || 0), 0))}
-                        </Td>
+              <Tr bg="blue.50">
+                <Td fontWeight="bold">Total Current Assets</Td>
+                <Td isNumeric fontWeight="bold">{formatCurrency(totalCurrentAssets)}</Td>
                       </Tr>
                     </Tfoot>
                   </Table>
                 </Box>
-              ))}
-              
-              <Flex justify="space-between" mt={2} p={2} bg="gray.100" borderRadius="md">
-                <Text fontWeight="bold">Total {category}</Text>
-                <Text fontWeight="bold">
-                  {formatCurrency(
-                    Object.values(subcategories).reduce(
-                      (sum, accounts) => sum + accounts.reduce((accSum, account) => accSum + (account.balance || 0), 0), 0
-                    )
-                  )}
-                </Text>
-              </Flex>
-            </Box>
-          ))}
-          
-          {/* Show total current assets */}
-          {balanceSheet.summary && (
-            <Flex justify="space-between" mt={4} p={3} bg="blue.50" borderRadius="md">
-              <Text fontWeight="bold">Total Current Assets</Text>
-              <Text fontWeight="bold">{formatCurrency(balanceSheet.summary.totalCurrentAssets || 0)}</Text>
-            </Flex>
-          )}
-        </Box>
-        
-        {/* Non-Current Assets */}
-        <Box mb={6}>
-          <Heading as="h3" size="md" mb={3} color="blue.600" borderBottom="1px" borderColor="gray.200" pb={2}>
-            Non-Current Assets
+
+        {/* Fixed Assets Section */}
+        <Box ml={4} mb={6}>
+          <Heading as="h4" size="sm" mb={3}>
+            Fixed Assets
           </Heading>
           
-          {balanceSheet.assets.nonCurrent && Object.entries(balanceSheet.assets.nonCurrent).map(([category, subcategories]) => (
-            <Box key={category} mb={4}>
-              <Heading as="h4" size="sm" mb={2} color="gray.600">
-                {category}
-              </Heading>
-              
-              {Object.entries(subcategories).map(([subcategory, accounts]) => (
-                <Box key={`${category}-${subcategory}`} mb={3} ml={4}>
-                  {subcategory !== 'General' && (
-                    <Text fontWeight="medium" color="gray.500" mb={1}>
-                      {subcategory}
-                    </Text>
-                  )}
-                  
-                  <Table size="sm" variant="simple">
+          <Table size="sm" variant="simple" mb={4}>
                     <Thead>
-                      <Tr>
+              <Tr bg="gray.50">
                         <Th>Account</Th>
                         <Th isNumeric>Balance</Th>
                       </Tr>
                     </Thead>
                     <Tbody>
-                      {accounts.map(account => (
-                        <Tr key={account.code || `account-${Math.random()}`}>
-                          <Td>{account.name}</Td>
-                          <Td isNumeric>{formatCurrency(account.balance || 0)}</Td>
+              {/* Mesin */}
+              {fixed['Mesin'] && fixed['Mesin'].length > 0 && (
+                <>
+                  <Tr>
+                    <Td fontWeight="medium" colSpan={2}>Mesin:</Td>
                         </Tr>
-                      ))}
-                    </Tbody>
-                    <Tfoot>
-                      <Tr bg="gray.50">
-                        <Td fontWeight="semibold">{subcategory !== 'General' ? `Subtotal - ${subcategory}` : `Subtotal - ${category}`}</Td>
-                        <Td isNumeric fontWeight="semibold">
-                          {formatCurrency(accounts.reduce((sum, account) => sum + (account.balance || 0), 0))}
-                        </Td>
+                  {fixed['Mesin'].map(account => (
+                    <Tr key={account.code}>
+                      <Td pl={8}>{account.name} ({account.code})</Td>
+                      <Td isNumeric>{formatCurrency(account.balance)}</Td>
                       </Tr>
-                    </Tfoot>
-                  </Table>
-                </Box>
-              ))}
-              
-              <Flex justify="space-between" mt={2} p={2} bg="gray.100" borderRadius="md">
-                <Text fontWeight="bold">Total {category}</Text>
-                <Text fontWeight="bold">
-                  {formatCurrency(
-                    Object.values(subcategories).reduce(
-                      (sum, accounts) => sum + accounts.reduce((accSum, account) => accSum + (account.balance || 0), 0), 0
-                    )
-                  )}
-                </Text>
-              </Flex>
-            </Box>
-          ))}
-          
-          {/* Fixed Assets */}
-          {balanceSheet.assets && balanceSheet.assets['Fixed Assets'] && balanceSheet.assets['Fixed Assets'].length > 0 && (
-            <Box mb={4}>
-              <Heading as="h4" size="sm" mb={2} color="gray.600">
-                Fixed Assets
-              </Heading>
-              <Table size="sm" variant="simple">
-                <Thead>
-                  <Tr>
-                    <Th>Asset</Th>
-                    <Th isNumeric>Book Value</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {balanceSheet.assets['Fixed Assets'].map(asset => (
-                    <Tr key={asset.id || `asset-${Math.random()}`}>
-                      <Td>{asset.name}</Td>
-                      <Td isNumeric>{formatCurrency(asset.bookValue || 0)}</Td>
-                    </Tr>
                   ))}
+                </>
+              )}
+
+              {/* Kendaraan */}
+              {fixed['Kendaraan'] && fixed['Kendaraan'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{fixed['Kendaraan'][0].name} ({fixed['Kendaraan'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(fixed['Kendaraan'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* Peralatan */}
+              {fixed['Peralatan'] && fixed['Peralatan'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{fixed['Peralatan'][0].name} ({fixed['Peralatan'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(fixed['Peralatan'][0].balance)}</Td>
+                  </Tr>
+              )}
+
+              {/* Bangunan */}
+              {fixed['Bangunan'] && fixed['Bangunan'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{fixed['Bangunan'][0].name} ({fixed['Bangunan'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(fixed['Bangunan'][0].balance)}</Td>
+                    </Tr>
+              )}
                 </Tbody>
                 <Tfoot>
-                  <Tr bg="gray.50">
-                    <Td fontWeight="semibold">Total Fixed Assets</Td>
-                    <Td isNumeric fontWeight="semibold">
-                      {formatCurrency(balanceSheet.summary && balanceSheet.summary.totalFixedAssets ? balanceSheet.summary.totalFixedAssets : 0)}
-                    </Td>
+              <Tr bg="blue.50">
+                <Td fontWeight="bold">Total Fixed Assets</Td>
+                <Td isNumeric fontWeight="bold">{formatCurrency(totalFixedAssets)}</Td>
                   </Tr>
                 </Tfoot>
               </Table>
             </Box>
-          )}
-          
-          {/* Work In Progress */}
-          {balanceSheet.assets && balanceSheet.assets['Work In Progress'] && balanceSheet.assets['Work In Progress'].length > 0 && (
-            <Box mb={4}>
-              <Heading as="h4" size="sm" mb={2} color="gray.600">
-                Work In Progress
+
+        {/* Contra Assets Section */}
+        <Box ml={4} mb={6}>
+          <Heading as="h4" size="sm" mb={3}>
+            Contra Assets (Accumulated Depreciation)
               </Heading>
-              <Table size="sm" variant="simple">
+
+          <Table size="sm" variant="simple" mb={4}>
                 <Thead>
-                  <Tr>
-                    <Th>Project</Th>
-                    <Th isNumeric>WIP Value</Th>
+              <Tr bg="gray.50">
+                <Th>Account</Th>
+                <Th isNumeric>Balance</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {balanceSheet.assets['Work In Progress'].map(wip => (
-                    <Tr key={wip.id || `wip-${Math.random()}`}>
-                      <Td>{wip.name}</Td>
-                      <Td isNumeric>{formatCurrency(wip.wipValue || 0)}</Td>
+              {contra && contra.length > 0 ? (
+                contra.map(account => (
+                  <Tr key={account.code}>
+                    <Td fontWeight="medium">{account.name} ({account.code})</Td>
+                    <Td isNumeric color="red.500">{formatCurrency(account.balance)}</Td>
                     </Tr>
-                  ))}
+                ))
+              ) : (
+                <Tr>
+                  <Td colSpan={2}>No contra assets found</Td>
+                </Tr>
+              )}
                 </Tbody>
                 <Tfoot>
-                  <Tr bg="gray.50">
-                    <Td fontWeight="semibold">Total Work In Progress</Td>
-                    <Td isNumeric fontWeight="semibold">
-                      {formatCurrency(balanceSheet.summary && balanceSheet.summary.totalWIP ? balanceSheet.summary.totalWIP : 0)}
-                    </Td>
+              <Tr bg="blue.50">
+                <Td fontWeight="bold">Total Contra Assets</Td>
+                <Td isNumeric fontWeight="bold" color="red.500">{formatCurrency(totalContraAssets)}</Td>
                   </Tr>
                 </Tfoot>
               </Table>
-            </Box>
-          )}
-          
-          {/* Show total non-current assets */}
-          {balanceSheet.summary && (
-            <Flex justify="space-between" mt={4} p={3} bg="blue.50" borderRadius="md">
-              <Text fontWeight="bold">Total Non-Current Assets</Text>
-              <Text fontWeight="bold">{formatCurrency(
-                (balanceSheet.summary.totalNonCurrentAssets || 0) + 
-                (balanceSheet.summary.totalFixedAssets || 0) + 
-                (balanceSheet.summary.totalWIP || 0)
-              )}</Text>
-            </Flex>
-          )}
         </Box>
         
         {/* Total Assets */}
-        {balanceSheet.summary && (
-          <Flex justify="space-between" mt={4} p={3} bg="blue.100" borderRadius="md">
-            <Text fontWeight="bold" fontSize="lg">TOTAL ASSETS</Text>
-            <Text fontWeight="bold" fontSize="lg">{formatCurrency(balanceSheet.summary.totalAssets || 0)}</Text>
+        <Box bg="blue.100" p={3} borderRadius="md">
+          <Flex justifyContent="space-between" alignItems="center">
+            <Text fontWeight="bold">TOTAL ASSETS</Text>
+            <Text fontWeight="bold">{formatCurrency(totalAssets)}</Text>
           </Flex>
-        )}
-      </>
+        </Box>
+      </Box>
     );
   };
 
   // Render liability categories and accounts
   const renderLiabilities = () => {
-    if (!balanceSheet || !balanceSheet.liabilities) return null;
+    if (!balanceSheet || !balanceSheet.liabilities) {
+      return <EmptyState message="No liability data available" />;
+    }
+
+    // Add default empty objects for each destructured property
+    const { current = {}, nonCurrent = {} } = balanceSheet.liabilities;
+    
+    const { 
+      totalCurrentLiabilities = 0, 
+      totalNonCurrentLiabilities = 0, 
+      totalLiabilities = 0 
+    } = balanceSheet.summary || {};
     
     return (
-      <>
-        {/* Current Liabilities */}
-        <Box mb={6}>
-          <Heading as="h3" size="md" mb={3} color="blue.600" borderBottom="1px" borderColor="gray.200" pb={2}>
-            Current Liabilities
+      <Box mt={8}>
+        <Heading as="h3" size="md" mb={4} color="orange.600">
+          2. LIABILITIES (Kewajiban)
           </Heading>
           
-          {balanceSheet.liabilities.current && Object.entries(balanceSheet.liabilities.current).map(([category, subcategories]) => (
-            <Box key={category} mb={4}>
-              <Heading as="h4" size="sm" mb={2} color="gray.600">
-                {category}
+        {/* Current Liabilities Section */}
+        <Box ml={4} mb={6}>
+          <Heading as="h4" size="sm" mb={3}>
+            Current Liabilities
               </Heading>
               
-              {Object.entries(subcategories).map(([subcategory, liabilities]) => (
-                <Box key={`${category}-${subcategory}`} mb={3} ml={4}>
-                  {subcategory !== 'General' && (
-                    <Text fontWeight="medium" color="gray.500" mb={1}>
-                      {subcategory}
-                    </Text>
-                  )}
-                  
-                  <Table size="sm" variant="simple">
+          <Table size="sm" variant="simple" mb={4}>
                     <Thead>
-                      <Tr>
+              <Tr bg="gray.50">
                         <Th>Account</Th>
                         <Th isNumeric>Balance</Th>
                       </Tr>
                     </Thead>
                     <Tbody>
-                      {liabilities.map(liability => (
-                        <Tr key={liability.code || `liability-${Math.random()}`}>
-                          <Td>{liability.name}</Td>
-                          <Td isNumeric>{formatCurrency(liability.balance || 0)}</Td>
+              {/* Hutang Bank Jangka Pendek */}
+              {current['Hutang Bank Jangka Pendek'] && current['Hutang Bank Jangka Pendek'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Hutang Bank Jangka Pendek'][0].name} ({current['Hutang Bank Jangka Pendek'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Hutang Bank Jangka Pendek'][0].balance)}</Td>
                         </Tr>
-                      ))}
+              )}
+
+              {/* Hutang Usaha */}
+              {current['Hutang Usaha'] && current['Hutang Usaha'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Hutang Usaha'][0].name} ({current['Hutang Usaha'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Hutang Usaha'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* Hutang Pajak */}
+              {current['Hutang Pajak'] && current['Hutang Pajak'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Hutang Pajak'][0].name} ({current['Hutang Pajak'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Hutang Pajak'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* Beban Yang Masih Harus Dibayar */}
+              {current['Beban Yang Masih Harus Dibayar'] && current['Beban Yang Masih Harus Dibayar'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{current['Beban Yang Masih Harus Dibayar'][0].name} ({current['Beban Yang Masih Harus Dibayar'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(current['Beban Yang Masih Harus Dibayar'][0].balance)}</Td>
+                </Tr>
+              )}
                     </Tbody>
                     <Tfoot>
-                      <Tr bg="gray.50">
-                        <Td fontWeight="semibold">{subcategory !== 'General' ? `Subtotal - ${subcategory}` : `Subtotal - ${category}`}</Td>
-                        <Td isNumeric fontWeight="semibold">
-                          {formatCurrency(liabilities.reduce((sum, liability) => sum + (liability.balance || 0), 0))}
-                        </Td>
+              <Tr bg="orange.50">
+                <Td fontWeight="bold">Total Current Liabilities</Td>
+                <Td isNumeric fontWeight="bold">{formatCurrency(totalCurrentLiabilities)}</Td>
                       </Tr>
                     </Tfoot>
                   </Table>
                 </Box>
-              ))}
-              
-              <Flex justify="space-between" mt={2} p={2} bg="gray.100" borderRadius="md">
-                <Text fontWeight="bold">Total {category}</Text>
-                <Text fontWeight="bold">
-                  {formatCurrency(
-                    Object.values(subcategories).reduce(
-                      (sum, liabilities) => sum + liabilities.reduce((accSum, liability) => accSum + (liability.balance || 0), 0), 0
-                    )
-                  )}
-                </Text>
-              </Flex>
-            </Box>
-          ))}
-          
-          {/* Show total current liabilities */}
-          {balanceSheet.summary && (
-            <Flex justify="space-between" mt={4} p={3} bg="red.50" borderRadius="md">
-              <Text fontWeight="bold">Total Current Liabilities</Text>
-              <Text fontWeight="bold">{formatCurrency(balanceSheet.summary.totalCurrentLiabilities || 0)}</Text>
-            </Flex>
-          )}
-        </Box>
-        
-        {/* Non-Current Liabilities */}
-        <Box mb={6}>
-          <Heading as="h3" size="md" mb={3} color="blue.600" borderBottom="1px" borderColor="gray.200" pb={2}>
+
+        {/* Non-Current Liabilities Section */}
+        <Box ml={4} mb={6}>
+          <Heading as="h4" size="sm" mb={3}>
             Non-Current Liabilities
           </Heading>
           
-          {balanceSheet.liabilities.nonCurrent && Object.entries(balanceSheet.liabilities.nonCurrent).length > 0 ? (
-            Object.entries(balanceSheet.liabilities.nonCurrent).map(([category, subcategories]) => (
-              <Box key={category} mb={4}>
-                <Heading as="h4" size="sm" mb={2} color="gray.600">
-                  {category}
-                </Heading>
-                
-                {Object.entries(subcategories).map(([subcategory, liabilities]) => (
-                  <Box key={`${category}-${subcategory}`} mb={3} ml={4}>
-                    {subcategory !== 'General' && (
-                      <Text fontWeight="medium" color="gray.500" mb={1}>
-                        {subcategory}
-                      </Text>
-                    )}
-                    
-                    <Table size="sm" variant="simple">
+          <Table size="sm" variant="simple" mb={4}>
                       <Thead>
-                        <Tr>
+              <Tr bg="gray.50">
                           <Th>Account</Th>
                           <Th isNumeric>Balance</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
-                        {liabilities.map(liability => (
-                          <Tr key={liability.code || `liability-${Math.random()}`}>
-                            <Td>{liability.name}</Td>
-                            <Td isNumeric>{formatCurrency(liability.balance || 0)}</Td>
+              {/* Hutang Bank Jangka Panjang */}
+              {nonCurrent['Hutang Bank Jangka Panjang'] && nonCurrent['Hutang Bank Jangka Panjang'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{nonCurrent['Hutang Bank Jangka Panjang'][0].name} ({nonCurrent['Hutang Bank Jangka Panjang'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(nonCurrent['Hutang Bank Jangka Panjang'][0].balance)}</Td>
                           </Tr>
-                        ))}
+              )}
+
+              {/* Hutang Leasing */}
+              {nonCurrent['Hutang Leasing'] && nonCurrent['Hutang Leasing'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{nonCurrent['Hutang Leasing'][0].name} ({nonCurrent['Hutang Leasing'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(nonCurrent['Hutang Leasing'][0].balance)}</Td>
+                </Tr>
+              )}
                       </Tbody>
                       <Tfoot>
-                        <Tr bg="gray.50">
-                          <Td fontWeight="semibold">{subcategory !== 'General' ? `Subtotal - ${subcategory}` : `Subtotal - ${category}`}</Td>
-                          <Td isNumeric fontWeight="semibold">
-                            {formatCurrency(liabilities.reduce((sum, liability) => sum + (liability.balance || 0), 0))}
-                          </Td>
+              <Tr bg="orange.50">
+                <Td fontWeight="bold">Total Non-Current Liabilities</Td>
+                <Td isNumeric fontWeight="bold">{formatCurrency(totalNonCurrentLiabilities)}</Td>
                         </Tr>
                       </Tfoot>
                     </Table>
                   </Box>
-                ))}
-                
-                <Flex justify="space-between" mt={2} p={2} bg="gray.100" borderRadius="md">
-                  <Text fontWeight="bold">Total {category}</Text>
-                  <Text fontWeight="bold">
-                    {formatCurrency(
-                      Object.values(subcategories).reduce(
-                        (sum, liabilities) => sum + liabilities.reduce((accSum, liability) => accSum + (liability.balance || 0), 0), 0
-                      )
-                    )}
-                  </Text>
+
+        {/* Total Liabilities */}
+        <Box bg="orange.100" p={3} borderRadius="md">
+          <Flex justifyContent="space-between" alignItems="center">
+            <Text fontWeight="bold">TOTAL LIABILITIES</Text>
+            <Text fontWeight="bold">{formatCurrency(totalLiabilities)}</Text>
                 </Flex>
               </Box>
-            ))
-          ) : (
-            <Text color="gray.500" fontStyle="italic">No non-current liabilities</Text>
-          )}
-          
-          {/* Show total non-current liabilities */}
-          {balanceSheet.summary && (
-            <Flex justify="space-between" mt={4} p={3} bg="red.50" borderRadius="md">
-              <Text fontWeight="bold">Total Non-Current Liabilities</Text>
-              <Text fontWeight="bold">{formatCurrency(balanceSheet.summary.totalNonCurrentLiabilities || 0)}</Text>
-            </Flex>
-          )}
         </Box>
-        
-        {/* Total Liabilities */}
-        {balanceSheet.summary && (
-          <Flex justify="space-between" mt={4} p={3} bg="red.100" borderRadius="md">
-            <Text fontWeight="bold" fontSize="lg">TOTAL LIABILITIES</Text>
-            <Text fontWeight="bold" fontSize="lg">{formatCurrency(balanceSheet.summary.totalLiabilities || 0)}</Text>
-          </Flex>
-        )}
-      </>
     );
   };
 
   // Render equity accounts
   const renderEquity = () => {
-    if (!balanceSheet.equity) return null;
+    if (!balanceSheet || !balanceSheet.equity) {
+      return <EmptyState message="No equity data available" />;
+    }
+
+    // Add default empty object for equity
+    const equity = balanceSheet.equity || {};
+    const { totalEquity = 0, netIncome = 0 } = balanceSheet.summary || {};
     
     return (
-      <>
-        <Heading as="h3" size="md" mb={3} color="blue.600" borderBottom="1px" borderColor="gray.200" pb={2}>
-          Equity
+      <Box mt={8}>
+        <Heading as="h3" size="md" mb={4} color="green.600">
+          3. EQUITY (Ekuitas)
         </Heading>
         
-        {Object.entries(balanceSheet.equity).map(([category, subcategories]) => (
-          <Box key={category} mb={4}>
-            <Heading as="h4" size="sm" mb={2} color="gray.600">
-              {category}
-            </Heading>
-            
-            {Object.entries(subcategories).map(([subcategory, equities]) => (
-              <Box key={`${category}-${subcategory}`} mb={3} ml={4}>
-                {subcategory !== 'General' && (
-                  <Text fontWeight="medium" color="gray.500" mb={1}>
-                    {subcategory}
-                  </Text>
-                )}
-                
-                <Table size="sm" variant="simple">
+        <Box ml={4} mb={6}>
+          <Table size="sm" variant="simple" mb={4}>
                   <Thead>
-                    <Tr>
+              <Tr bg="gray.50">
                       <Th>Account</Th>
                       <Th isNumeric>Balance</Th>
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {equities.map(equity => (
-                      <Tr key={equity.code}>
-                        <Td>{equity.name}</Td>
-                        <Td isNumeric>{formatCurrency(equity.balance)}</Td>
+              {/* Modal Saham */}
+              {equity['Modal Saham'] && equity['Modal Saham'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{equity['Modal Saham'][0].name} ({equity['Modal Saham'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(equity['Modal Saham'][0].balance)}</Td>
                       </Tr>
-                    ))}
+              )}
+
+              {/* Laba Ditahan */}
+              {equity['Laba Ditahan'] && equity['Laba Ditahan'].length > 0 && (
+                <Tr>
+                  <Td fontWeight="medium">{equity['Laba Ditahan'][0].name} ({equity['Laba Ditahan'][0].code})</Td>
+                  <Td isNumeric>{formatCurrency(equity['Laba Ditahan'][0].balance)}</Td>
+                </Tr>
+              )}
+
+              {/* Net Income */}
+              <Tr>
+                <Td fontWeight="medium">Net Income (Current Period)</Td>
+                <Td isNumeric>{formatCurrency(netIncome)}</Td>
+              </Tr>
                   </Tbody>
                   <Tfoot>
-                    <Tr bg="gray.50">
-                      <Td fontWeight="semibold">{subcategory !== 'General' ? `Subtotal - ${subcategory}` : `Subtotal - ${category}`}</Td>
-                      <Td isNumeric fontWeight="semibold">
-                        {formatCurrency(equities.reduce((sum, equity) => sum + equity.balance, 0))}
-                      </Td>
+              <Tr bg="green.50">
+                <Td fontWeight="bold">TOTAL EQUITY</Td>
+                <Td isNumeric fontWeight="bold">{formatCurrency(totalEquity)}</Td>
                     </Tr>
                   </Tfoot>
                 </Table>
               </Box>
-            ))}
-            
-            <Flex justify="space-between" mt={2} p={2} bg="gray.100" borderRadius="md">
-              <Text fontWeight="bold">Total {category}</Text>
-              <Text fontWeight="bold">
-                {formatCurrency(
-                  Object.values(subcategories).reduce(
-                    (sum, equities) => sum + equities.reduce((accSum, equity) => accSum + equity.balance, 0), 0
-                  )
-                )}
-              </Text>
-            </Flex>
           </Box>
-        ))}
-        
-        {/* Net Income */}
-        <Box mb={4}>
-          <Heading as="h4" size="sm" mb={2} color="gray.600">
-            Net Income
+    );
+  };
+
+  // Add this function to render the balance status
+  const renderBalanceStatus = () => {
+    if (!balanceSheet || !balanceSheet.summary) {
+      return null;
+    }
+
+    // Add default values for summary properties
+    const { 
+      totalAssets = 0, 
+      totalLiabilitiesAndEquity = 0, 
+      isBalanced = true, 
+      difference = 0 
+    } = balanceSheet.summary;
+
+    return (
+      <Box mt={8} p={4} borderWidth={1} borderRadius="md" borderColor={isBalanced ? "green.300" : "red.300"} bg={isBalanced ? "green.50" : "red.50"}>
+        <Heading as="h3" size="md" mb={4}>
+          Final Calculation
           </Heading>
-          <Flex justify="space-between" p={3} 
-            bg={balanceSheet.summary && balanceSheet.summary.netIncome >= 0 ? "green.50" : "red.50"} 
-            borderRadius="md"
-          >
-            <Text fontWeight="bold">Net Income for Period</Text>
-            <Text fontWeight="bold">
-              {formatCurrency(balanceSheet.summary && balanceSheet.summary.netIncome ? balanceSheet.summary.netIncome : 0)}
-            </Text>
-          </Flex>
-        </Box>
         
-        {/* Total Equity */}
-        {balanceSheet.summary && (
-          <Flex justify="space-between" mt={4} p={3} bg="green.100" borderRadius="md">
-            <Text fontWeight="bold" fontSize="lg">TOTAL EQUITY WITH INCOME</Text>
-            <Text fontWeight="bold" fontSize="lg">
-              {formatCurrency(balanceSheet.summary.totalEquityWithIncome || 0)}
-            </Text>
-          </Flex>
-        )}
-      </>
+        <Table size="md" variant="simple">
+          <Tbody>
+            <Tr>
+              <Td fontWeight="bold">Total Assets</Td>
+              <Td isNumeric fontWeight="bold">{formatCurrency(totalAssets)}</Td>
+            </Tr>
+            <Tr>
+              <Td fontWeight="bold">Total Liabilities + Equity</Td>
+              <Td isNumeric fontWeight="bold">{formatCurrency(totalLiabilitiesAndEquity)}</Td>
+            </Tr>
+          </Tbody>
+        </Table>
+        
+        <Flex mt={4} justifyContent="space-between" alignItems="center">
+          <Text fontWeight="bold">Status:</Text>
+          {isBalanced ? (
+            <Badge colorScheme="green" p={2} fontSize="md">✅ Seimbang</Badge>
+          ) : (
+            <Badge colorScheme="red" p={2} fontSize="md">❌ Tidak Seimbang (Difference: {formatCurrency(Math.abs(difference))})</Badge>
+          )}
+        </Flex>
+      </Box>
     );
   };
 
   return (
+    <ProtectedRoute>
     <Box p={4}>
-      <Flex justify="space-between" align="center" mb={6}>
+        <Flex justifyContent="space-between" alignItems="center" mb={6}>
+          <Heading as="h1" size="xl">Balance Sheet</Heading>
         <HStack>
           <IconButton
             icon={<FiArrowLeft />}
-            aria-label="Go back"
-            variant="ghost"
             onClick={goBack}
-            mr={2}
-          />
-          <Heading as="h1" size="lg">
-            Balance Sheet
-          </Heading>
-        </HStack>
-        <HStack spacing={2}>
-          <ExportButton 
-            data={prepareExportData()}
-            filename={`balance_sheet_${selectedDate}`}
-            onExport={handleExportComplete}
-            isDisabled={loading || !!error || (!balanceSheet.assets && !balanceSheet.liabilities && !balanceSheet.equity)}
-            tooltipText="Export balance sheet to various formats"
-            buttonText="Export"
-            pdfConfig={{
-              orientation: 'portrait',
-              title: `Balance Sheet (As of ${selectedDate})`
-            }}
-          />
-          <Button 
-            leftIcon={<FiCalendar />} 
-            colorScheme="blue" 
+              aria-label="Go back"
             variant="outline"
-            size="sm"
-          >
-            {selectedDate}
-          </Button>
-        </HStack>
-      </Flex>
-
-      {/* Date Selection and Comparison Toggle */}
-      <Box mb={6} p={4} bg={cardBg} borderRadius="md" shadow="sm">
-        <Flex direction={{ base: 'column', md: 'row' }} align={{ base: 'flex-start', md: 'center' }} justify="space-between">
-          <Flex align="center" mb={{ base: 3, md: 0 }}>
-            <Text fontWeight="medium" mr={4}>
-              Balance Sheet as of:
-            </Text>
-            <input
+            />
+            <Input
               type="date"
               value={selectedDate}
               onChange={handleDateChange}
-              style={{
-                padding: '8px',
-                borderRadius: '4px',
-                border: '1px solid #e2e8f0',
-                maxWidth: '200px'
-              }}
+              width="auto"
+              mr={2}
             />
-          </Flex>
-          
-          <Flex align="center">
-            <Text fontWeight="medium" mr={4}>
-              Compare with previous year:
-            </Text>
             <Button 
-              size="sm" 
-              colorScheme={showComparison ? "green" : "gray"}
+              leftIcon={<FiFilter />}
               onClick={toggleComparison}
+              colorScheme={showComparison ? "blue" : "gray"}
+              variant={showComparison ? "solid" : "outline"}
             >
-              {showComparison ? "Enabled" : "Disabled"}
+              {showComparison ? "Hide Comparison" : "Show Comparison"}
             </Button>
-          </Flex>
+            <ExportButton
+              data={prepareExportData()}
+              filename={`balance-sheet-${selectedDate}`}
+              onComplete={handleExportComplete}
+            />
+          </HStack>
         </Flex>
-        
-        {showComparison && previousYearBalanceSheet && (
-          <Alert status="info" mt={4} borderRadius="md">
-            <AlertIcon />
-            <Box>
-              <AlertTitle>Comparison Mode</AlertTitle>
-              <AlertDescription>
-                Comparing current data ({selectedDate}) with previous year ({getPreviousYearDate(selectedDate)})
-              </AlertDescription>
-            </Box>
-          </Alert>
-        )}
-      </Box>
-
-      {/* Summary Cards */}
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Assets</StatLabel>
-          <StatNumber>{formatCurrency(totals.totalAssets)}</StatNumber>
-          {showComparison && previousYearBalanceSheet && (
-            <StatHelpText>
-              <StatArrow type={totals.totalAssets >= (previousYearBalanceSheet.summary.totalAssets || 0) ? "increase" : "decrease"} />
-              {formatPercentage(calculatePercentChange(
-                totals.totalAssets,
-                previousYearBalanceSheet.summary.totalAssets
-              ))}
-              {" from previous year"}
-            </StatHelpText>
-          )}
-          {!showComparison && (
-            <StatHelpText>Including Fixed Assets & WIP</StatHelpText>
-          )}
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Liabilities</StatLabel>
-          <StatNumber>{formatCurrency(totals.totalLiabilities)}</StatNumber>
-          {showComparison && previousYearBalanceSheet && (
-            <StatHelpText>
-              <StatArrow type={totals.totalLiabilities <= (previousYearBalanceSheet.summary.totalLiabilities || 0) ? "increase" : "decrease"} />
-              {formatPercentage(calculatePercentChange(
-                totals.totalLiabilities,
-                previousYearBalanceSheet.summary.totalLiabilities
-              ))}
-              {" from previous year"}
-            </StatHelpText>
-          )}
-          {!showComparison && totals.totalNegativeWIP > 0 && (
-            <StatHelpText>Includes {formatCurrency(totals.totalNegativeWIP)} advance payments</StatHelpText>
-          )}
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Equity</StatLabel>
-          <StatNumber>{formatCurrency(totals.totalEquity)}</StatNumber>
-          {showComparison && previousYearBalanceSheet && (
-            <StatHelpText>
-              <StatArrow type={totals.totalEquity >= (previousYearBalanceSheet.summary.totalEquity || 0) ? "increase" : "decrease"} />
-              {formatPercentage(calculatePercentChange(
-                totals.totalEquity,
-                previousYearBalanceSheet.summary.totalEquity
-              ))}
-              {" from previous year"}
-            </StatHelpText>
-          )}
-          {!showComparison && (
-            <StatHelpText>Excluding Net Income</StatHelpText>
-          )}
-        </Stat>
-      </SimpleGrid>
-      
-      {/* Net Income and Total Equity with Income Cards */}
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Net Income</StatLabel>
-          <StatNumber>{formatCurrency(totals.netIncome)}</StatNumber>
-          <StatHelpText>
-            {showComparison && previousYearBalanceSheet ? (
-              <>
-                <StatArrow type={totals.netIncome >= (previousYearBalanceSheet.summary.netIncome || 0) ? "increase" : "decrease"} />
-                {formatPercentage(calculatePercentChange(
-                  totals.netIncome,
-                  previousYearBalanceSheet.summary.netIncome
-                ))}
-                {" from previous year"}
-              </>
-            ) : (
-              <>
-                <StatArrow type={totals.netIncome >= 0 ? "increase" : "decrease"} />
-                {totals.netIncome >= 0 ? 'Profit' : 'Loss'}
-              </>
-            )}
-          </StatHelpText>
-        </Stat>
-        
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Equity with Income</StatLabel>
-          <StatNumber>{formatCurrency(totals.totalEquityWithIncome)}</StatNumber>
-          {showComparison && previousYearBalanceSheet && (
-            <StatHelpText>
-              <StatArrow type={totals.totalEquityWithIncome >= (previousYearBalanceSheet.summary.totalEquityWithIncome || 0) ? "increase" : "decrease"} />
-              {formatPercentage(calculatePercentChange(
-                totals.totalEquityWithIncome,
-                previousYearBalanceSheet.summary.totalEquityWithIncome
-              ))}
-              {" from previous year"}
-            </StatHelpText>
-          )}
-          {!showComparison && (
-            <StatHelpText>Equity + Net Income</StatHelpText>
-          )}
-        </Stat>
-
-        <Stat bg={cardBg} p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Liabilities and Equity</StatLabel>
-          <StatNumber>{formatCurrency(totals.totalLiabilitiesAndEquity)}</StatNumber>
-          {showComparison && previousYearBalanceSheet && (
-            <StatHelpText>
-              <StatArrow type={totals.totalLiabilitiesAndEquity >= (previousYearBalanceSheet.summary.totalLiabilitiesAndEquity || 0) ? "increase" : "decrease"} />
-              {formatPercentage(calculatePercentChange(
-                totals.totalLiabilitiesAndEquity,
-                previousYearBalanceSheet.summary.totalLiabilitiesAndEquity
-              ))}
-              {" from previous year"}
-            </StatHelpText>
-          )}
-          {!showComparison && (
-            <StatHelpText>Should equal Total Assets</StatHelpText>
-          )}
-        </Stat>
-      </SimpleGrid>
-
-      {error && <ErrorAlert message={error} />}
 
       {loading ? (
-        <LoadingSpinner text="Loading balance sheet data..." />
-      ) : (
-        <Tabs variant="enclosed" colorScheme="blue">
-          <TabList>
-            <Tab>Assets</Tab>
-            <Tab>Liabilities</Tab>
-            <Tab>Equity</Tab>
-            <Tab>Summary</Tab>
-          </TabList>
-
-          <TabPanels>
-            {/* Assets Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Assets</Heading>
+          <LoadingSpinner />
+        ) : error ? (
+          <ErrorAlert message={error} />
+        ) : (
+          <Box>
+            <Card mb={6}>
+              <CardHeader bg="gray.50" py={3}>
+                <Heading size="md">Balance Sheet as of {new Date(selectedDate).toLocaleDateString()}</Heading>
+              </CardHeader>
+              <CardBody>
                 {renderAssets()}
-              </Box>
-            </TabPanel>
-
-            {/* Liabilities Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Liabilities</Heading>
                 {renderLiabilities()}
-              </Box>
-            </TabPanel>
-
-            {/* Equity Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Equity</Heading>
                 {renderEquity()}
+                {renderBalanceStatus()}
+              </CardBody>
+            </Card>
               </Box>
-            </TabPanel>
-
-            {/* Summary Tab */}
-            <TabPanel>
-              <Box bg={cardBg} p={4} borderRadius="md" shadow="sm">
-                <Heading size="md" mb={4}>Balance Sheet Summary</Heading>
-                <Table variant="simple">
-                  <Thead>
-                    <Tr>
-                      <Th>Category</Th>
-                      <Th isNumeric>Amount</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    <Tr>
-                      <Td fontWeight="bold">Total Assets</Td>
-                      <Td isNumeric>{formatCurrency(totals.totalAssets)}</Td>
-                    </Tr>
-                    <Tr>
-                      <Td pl={8}>Total Account Assets</Td>
-                      <Td isNumeric>{formatCurrency(balanceSheet.summary && balanceSheet.summary.totalAccountAssets ? balanceSheet.summary.totalAccountAssets : 0)}</Td>
-                    </Tr>
-                    <Tr>
-                      <Td pl={8}>Total Fixed Assets</Td>
-                      <Td isNumeric>{formatCurrency(balanceSheet.summary && balanceSheet.summary.totalFixedAssets ? balanceSheet.summary.totalFixedAssets : 0)}</Td>
-                    </Tr>
-                    {balanceSheet.summary && balanceSheet.summary.totalWIP > 0 && (
-                      <Tr>
-                        <Td pl={8}>Total Work In Progress</Td>
-                        <Td isNumeric>{formatCurrency(balanceSheet.summary.totalWIP)}</Td>
-                      </Tr>
-                    )}
-                    {balanceSheet.summary && balanceSheet.summary.totalContraAssets !== 0 && (
-                      <Tr>
-                        <Td pl={8}>Total Accumulated Depreciation</Td>
-                        <Td isNumeric>{formatCurrency(balanceSheet.summary.totalContraAssets)}</Td>
-                      </Tr>
-                    )}
-                    <Tr>
-                      <Td fontWeight="bold">Total Liabilities</Td>
-                      <Td isNumeric>{formatCurrency(totals.totalLiabilities)}</Td>
-                    </Tr>
-                    {totals.totalNegativeWIP > 0 && (
-                      <Tr>
-                        <Td pl={8}>Advance from Customers (Negative WIP)</Td>
-                        <Td isNumeric>{formatCurrency(totals.totalNegativeWIP)}</Td>
-                      </Tr>
-                    )}
-                    <Tr>
-                      <Td fontWeight="bold">Total Equity</Td>
-                      <Td isNumeric>{formatCurrency(totals.totalEquity)}</Td>
-                    </Tr>
-                    <Tr>
-                      <Td fontWeight="bold">Net Income</Td>
-                      <Td isNumeric>{formatCurrency(totals.netIncome)}</Td>
-                    </Tr>
-                    <Tr>
-                      <Td fontWeight="bold">Total Equity with Income</Td>
-                      <Td isNumeric>{formatCurrency(totals.totalEquityWithIncome)}</Td>
-                    </Tr>
-                    <Tr>
-                      <Td fontWeight="bold">Total Liabilities and Equity</Td>
-                      <Td isNumeric>{formatCurrency(totals.totalLiabilitiesAndEquity)}</Td>
-                    </Tr>
-                    {balanceSheet.summary && balanceSheet.summary.difference && Math.abs(balanceSheet.summary.difference) > 0.01 && (
-                      <Tr bgColor="yellow.50">
-                        <Td fontWeight="bold" color="orange.600">Difference (Out of Balance)</Td>
-                        <Td isNumeric color="orange.600">{formatCurrency(Math.abs(balanceSheet.summary.difference))}</Td>
-                      </Tr>
-                    )}
-                    <Tr>
-                      <Td fontWeight="bold">Balance Status</Td>
-                      <Td isNumeric>
-                        <Badge 
-                          colorScheme={balanceStatus.isBalanced ? "green" : "orange"}
-                          p={1}
-                        >
-                          {balanceStatus.isBalanced ? "BALANCED" : "NOT BALANCED"}
-                        </Badge>
-                      </Td>
-                    </Tr>
-                  </Tbody>
-                </Table>
-                <Divider my={4} />
-                <Flex justify="space-between" p={2} bg={balanceStatus.isBalanced ? "blue.50" : "yellow.50"} _dark={{ bg: balanceStatus.isBalanced ? "blue.800" : "yellow.800" }} borderRadius="md">
-                  <Text fontWeight="bold">Total Liabilities and Equity</Text>
-                  <Text fontWeight="bold">{formatCurrency(totals.totalLiabilitiesAndEquity)}</Text>
-                </Flex>
-                {!balanceStatus.isBalanced ? (
-                  <Alert status="warning" mt={4} borderRadius="md">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle>Balance Sheet Not Balanced</AlertTitle>
-                      <AlertDescription>
-                        There is a difference of {formatCurrency(Math.abs(balanceStatus.difference))} 
-                        between assets and liabilities + equity. Please check your transactions and ensure proper double-entry accounting.
-                      </AlertDescription>
+        )}
                     </Box>
-                  </Alert>
-                ) : (
-                  <Alert status="success" mt={4} borderRadius="md">
-                    <AlertIcon />
-                    <Text>
-                      Balance sheet is properly balanced using double-entry accounting.
-                    </Text>
-                  </Alert>
-                )}
-                
-                {/* Guidance for unbalanced sheets */}
-                {!balanceStatus.isBalanced && (
-                  <Alert status="info" mt={4} borderRadius="md">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle>How to Fix Unbalanced Sheets</AlertTitle>
-                      <AlertDescription>
-                        <OrderedList spacing={1} mt={2}>
-                          <ListItem>Use the double-entry transaction feature when adding new transactions</ListItem>
-                          <ListItem>Review recent transactions for missing counter entries</ListItem>
-                          <ListItem>Ensure all cash transactions have corresponding entries in revenue, expense, asset, liability, or equity accounts</ListItem>
-                          <ListItem>Check for transactions with incorrect account types or amounts</ListItem>
-                        </OrderedList>
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
-                )}
-              </Box>
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      )}
-    </Box>
+    </ProtectedRoute>
   );
 };
 

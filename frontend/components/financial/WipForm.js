@@ -39,10 +39,19 @@ import {
   AlertTitle,
   AlertDescription,
   useDisclosure,
+  CloseButton,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
 } from '@chakra-ui/react';
 import { FiInfo, FiPlusCircle } from 'react-icons/fi';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
+import { useRouter } from 'next/router';
+import React from 'react';
 
 const WipForm = ({ 
   isOpen, 
@@ -81,6 +90,12 @@ const WipForm = ({
   const [showAddCostForm, setShowAddCostForm] = useState(false);
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+  const router = useRouter();
+
+  // Add state for delete confirmation dialog
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const cancelRef = React.useRef();
 
   // Check authentication status
   useEffect(() => {
@@ -215,6 +230,22 @@ const WipForm = ({
     const costs = parseFloat(formData.totalCosts) || 0;
     const billed = parseFloat(formData.totalBilled) || 0;
     
+    // Reset billed to 0 if costs are 0 to avoid negative WIP
+    if (costs === 0 && billed > 0) {
+      setFormData(prev => ({
+        ...prev,
+        totalBilled: 0,
+        wipValue: 0
+      }));
+      
+      // Set error message
+      setErrors(prev => ({
+        ...prev,
+        totalBilled: 'Cannot bill when there are no costs'
+      }));
+      return;
+    }
+    
     // WIP value = Total Costs - Total Billed
     const calculatedWipValue = costs - billed;
     
@@ -242,6 +273,11 @@ const WipForm = ({
     
     if (formData.totalBilled < 0) {
       newErrors.totalBilled = 'Total billed cannot be negative';
+    }
+
+    // Validasi tambahan: jika costs adalah 0, maka billed juga harus 0
+    if (formData.totalCosts === 0 && formData.totalBilled > 0) {
+      newErrors.totalBilled = 'Total billed cannot be greater than 0 when total costs are 0';
     }
     
     setErrors(newErrors);
@@ -454,6 +490,23 @@ const WipForm = ({
       return;
     }
     
+    // Validasi tambahan untuk WIP negatif
+    const wipValue = parseFloat(formData.wipValue);
+    if (wipValue < 0 && formData.totalCosts === 0) {
+      toast({
+        title: 'Validation Error',
+        description: 'Cannot create WIP with zero costs and non-zero billing. Please add project costs first.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      setErrors(prev => ({
+        ...prev,
+        totalCosts: 'Project must have costs before billing can be recorded'
+      }));
+      return;
+    }
+    
     setIsSubmitting(true);
     
     try {
@@ -585,6 +638,88 @@ const WipForm = ({
             duration: 5000,
             isClosable: true,
           });
+        } else if (errorMessage.includes('project cost')) {
+          // Handle missing project costs
+          toast({
+            title: 'Project Costs Required',
+            description: 'You must add at least one project cost before creating a WIP entry. Would you like to add a cost now?',
+            status: 'error',
+            duration: 8000,
+            isClosable: true,
+            render: ({ onClose }) => (
+              <Box p={3} bg="red.600" borderRadius="md" color="white">
+                <Flex justifyContent="space-between">
+                  <Box>
+                    <Text fontWeight="bold">Project Costs Required</Text>
+                    <Text mt={1}>You must add at least one project cost before creating a WIP entry.</Text>
+                  </Box>
+                  <CloseButton size="sm" onClick={onClose} />
+                </Flex>
+                <Button 
+                  mt={3} 
+                  colorScheme="whiteAlpha" 
+                  size="sm" 
+                  onClick={() => {
+                    setShowAddCostForm(true);
+                    onClose();
+                  }}
+                >
+                  Add Project Cost
+                </Button>
+              </Box>
+            )
+          });
+        } else if (errorMessage.includes('billing')) {
+          // Handle missing billings
+          toast({
+            title: 'Project Billing Required',
+            description: 'You must add at least one billing entry before creating a WIP entry.',
+            status: 'error',
+            duration: 8000,
+            isClosable: true,
+            render: ({ onClose }) => (
+              <Box p={3} bg="red.600" borderRadius="md" color="white">
+                <Flex justifyContent="space-between">
+                  <Box>
+                    <Text fontWeight="bold">Project Billing Required</Text>
+                    <Text mt={1}>You must add at least one billing entry before creating a WIP entry.</Text>
+                  </Box>
+                  <CloseButton size="sm" onClick={onClose} />
+                </Flex>
+                <Button 
+                  mt={3} 
+                  colorScheme="whiteAlpha" 
+                  size="sm" 
+                  onClick={() => {
+                    onClose();
+                    // Redirect to billing page for this project
+                    if (formData.projectId) {
+                      router.push(`/projects/${formData.projectId}/billing`);
+                    }
+                  }}
+                >
+                  Go to Billing
+                </Button>
+              </Box>
+            )
+          });
+        } else if (errorMessage.includes('costs') && errorMessage.includes('billed')) {
+          // Handle WIP validation errors related to costs and billed amounts
+          toast({
+            title: 'WIP Calculation Error',
+            description: errorMessage,
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+          });
+          
+          // Set error on the appropriate field
+          if (formData.totalCosts === 0) {
+            setErrors(prev => ({
+              ...prev,
+              totalCosts: 'Project must have costs before billing can be recorded'
+            }));
+          }
         } else {
           toast({
             title: 'Validation Error',
@@ -608,174 +743,266 @@ const WipForm = ({
     }
   };
 
+  // Handle WIP deletion
+  const handleDeleteWip = async () => {
+    if (!project || !project.id) {
+      toast({
+        title: 'Error',
+        description: 'No project selected',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    setIsDeleting(true);
+    
+    try {
+      const response = await axios.delete(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/wip/${project.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      
+      toast({
+        title: 'Success',
+        description: response.data.message || 'WIP data deleted successfully',
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
+      
+      // Call success callback
+      if (onSubmitSuccess) {
+        onSubmitSuccess();
+      }
+      
+      // Close the dialogs
+      setIsDeleteDialogOpen(false);
+      onClose();
+    } catch (error) {
+      console.error('Error deleting WIP data:', error);
+      toast({
+        title: 'Error',
+        description: error.response?.data?.message || 'Failed to delete WIP data',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>
-          {project ? 'Update WIP Data' : 'Add WIP Data'}
-        </ModalHeader>
-        <ModalCloseButton />
-        
-        <ModalBody>
-          <VStack spacing={4} align="stretch">
-            {/* Project Selection (only for new WIP entries) */}
-            {!project && (
-              <FormControl isRequired isInvalid={!!errors.projectId}>
-                <FormLabel>Select Project</FormLabel>
-                <Select
-                  name="projectId"
-                  value={formData.projectId}
-                  onChange={handleChange}
-                  placeholder="Select a project"
-                  isDisabled={loadingProjects}
-                >
-                  {availableProjects.map(project => (
-                    <option key={project.id} value={project.id}>
-                      {project.name} ({project.projectCode})
-                    </option>
-                  ))}
-                </Select>
-                {errors.projectId && <FormErrorMessage>{errors.projectId}</FormErrorMessage>}
-                {loadingProjects && (
-                  <Box mt={2} display="flex" alignItems="center">
-                    <Spinner size="sm" mr={2} />
-                    <Text fontSize="sm">Loading project data...</Text>
-                  </Box>
-                )}
-              </FormControl>
-            )}
-            
-            {/* Project Info (when selected) */}
-            {selectedProjectData && (
-              <Box p={3} bg="gray.50" borderRadius="md">
-                <Text fontWeight="bold">{selectedProjectData.name}</Text>
-                <Text fontSize="sm">Code: {selectedProjectData.projectCode}</Text>
-                <Text fontSize="sm">
-                  Total Value: {formatCurrency(selectedProjectData.totalValue || 0)}
-                </Text>
-                {selectedProjectData.client && (
-                  <Text fontSize="sm">Client: {selectedProjectData.client.name}</Text>
-                )}
-              </Box>
-            )}
-            
-            {/* Add Project Cost Form (when no costs exist) */}
-            {showAddCostForm && selectedProjectData && (
-              <>
-                <Alert status="info" borderRadius="md">
-                  <AlertIcon />
-                  <Box flex="1">
-                    <AlertTitle>No Project Costs Found</AlertTitle>
-                    <AlertDescription>
-                      This project has no costs recorded. Add at least one cost entry to create WIP data.
-                    </AlertDescription>
-                  </Box>
-                </Alert>
-                
-                <Box p={4} borderWidth="1px" borderRadius="md" bg="gray.50">
-                  <Text fontWeight="bold" mb={3}>Add Project Cost</Text>
-                  
-                  <VStack spacing={3} align="stretch">
-                    <FormControl isRequired isInvalid={!!costErrors.category}>
-                      <FormLabel>Category</FormLabel>
-                      <Select
-                        name="category"
-                        value={costData.category}
-                        onChange={handleCostChange}
-                      >
-                        <option value="labor">Labor</option>
-                        <option value="material">Material</option>
-                        <option value="equipment">Equipment</option>
-                        <option value="subcontractor">Subcontractor</option>
-                        <option value="overhead">Overhead</option>
-                        <option value="other">Other</option>
-                      </Select>
-                      {costErrors.category && <FormErrorMessage>{costErrors.category}</FormErrorMessage>}
-                    </FormControl>
-                    
-                    <FormControl isRequired isInvalid={!!costErrors.description}>
-                      <FormLabel>Description</FormLabel>
-                      <Input
-                        name="description"
-                        value={costData.description}
-                        onChange={handleCostChange}
-                        placeholder="Enter cost description"
-                      />
-                      {costErrors.description && <FormErrorMessage>{costErrors.description}</FormErrorMessage>}
-                    </FormControl>
-                    
-                    <FormControl isRequired isInvalid={!!costErrors.amount}>
-                      <FormLabel>Amount</FormLabel>
-                      <NumberInput
-                        value={costData.amount}
-                        onChange={(value) => handleCostNumberChange('amount', value)}
-                        min={0}
-                        step={1000}
-                      >
-                        <NumberInputField />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                      {costErrors.amount && <FormErrorMessage>{costErrors.amount}</FormErrorMessage>}
-                      <FormHelperText>
-                        {formatCurrency(costData.amount)}
-                      </FormHelperText>
-                    </FormControl>
-                    
-                    <FormControl isRequired isInvalid={!!costErrors.date}>
-                      <FormLabel>Date</FormLabel>
-                      <Input
-                        name="date"
-                        type="date"
-                        value={costData.date}
-                        onChange={handleCostChange}
-                      />
-                      {costErrors.date && <FormErrorMessage>{costErrors.date}</FormErrorMessage>}
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>Status</FormLabel>
-                      <Select
-                        name="status"
-                        value={costData.status}
-                        onChange={handleCostChange}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                      </Select>
-                    </FormControl>
-                    
-                    <Button
-                      leftIcon={<FiPlusCircle />}
-                      colorScheme="blue"
-                      variant="outline"
-                      onClick={handleAddCost}
-                      isLoading={isAddingCost}
-                      mt={2}
-                    >
-                      Add Cost
-                    </Button>
-                  </VStack>
+    <>
+      <Modal isOpen={isOpen} onClose={onClose} size="xl" scrollBehavior="inside">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>
+            {project ? 'Update WIP Data' : 'Add WIP Data'}
+          </ModalHeader>
+          <ModalCloseButton />
+          
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              {/* Project Selection (only for new WIP entries) */}
+              {!project && (
+                <FormControl isRequired isInvalid={!!errors.projectId}>
+                  <FormLabel>Select Project</FormLabel>
+                  <Select
+                    name="projectId"
+                    value={formData.projectId}
+                    onChange={handleChange}
+                    placeholder="Select a project"
+                    isDisabled={loadingProjects}
+                  >
+                    {availableProjects.map(project => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} ({project.projectCode})
+                      </option>
+                    ))}
+                  </Select>
+                  {errors.projectId && <FormErrorMessage>{errors.projectId}</FormErrorMessage>}
+                  {loadingProjects && (
+                    <Box mt={2} display="flex" alignItems="center">
+                      <Spinner size="sm" mr={2} />
+                      <Text fontSize="sm">Loading project data...</Text>
+                    </Box>
+                  )}
+                </FormControl>
+              )}
+              
+              {/* Project Info (when selected) */}
+              {selectedProjectData && (
+                <Box p={3} bg="gray.50" borderRadius="md">
+                  <Text fontWeight="bold">{selectedProjectData.name}</Text>
+                  <Text fontSize="sm">Code: {selectedProjectData.projectCode}</Text>
+                  <Text fontSize="sm">
+                    Total Value: {formatCurrency(selectedProjectData.totalValue || 0)}
+                  </Text>
+                  {selectedProjectData.client && (
+                    <Text fontSize="sm">Client: {selectedProjectData.client.name}</Text>
+                  )}
                 </Box>
-                
-                <Divider my={3} />
-              </>
-            )}
-            
-            <FormControl isInvalid={!!errors.progress}>
-              <FormLabel>Project Progress (%)</FormLabel>
-              <HStack>
+              )}
+              
+              {/* Add Project Cost Form (when no costs exist) */}
+              {showAddCostForm && selectedProjectData && (
+                <>
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <Box flex="1">
+                      <AlertTitle>No Project Costs Found</AlertTitle>
+                      <AlertDescription>
+                        This project has no costs recorded. Add at least one cost entry to create WIP data.
+                      </AlertDescription>
+                    </Box>
+                  </Alert>
+                  
+                  <Box p={4} borderWidth="1px" borderRadius="md" bg="gray.50">
+                    <Text fontWeight="bold" mb={3}>Add Project Cost</Text>
+                    
+                    <VStack spacing={3} align="stretch">
+                      <FormControl isRequired isInvalid={!!costErrors.category}>
+                        <FormLabel>Category</FormLabel>
+                        <Select
+                          name="category"
+                          value={costData.category}
+                          onChange={handleCostChange}
+                        >
+                          <option value="labor">Labor</option>
+                          <option value="material">Material</option>
+                          <option value="equipment">Equipment</option>
+                          <option value="subcontractor">Subcontractor</option>
+                          <option value="overhead">Overhead</option>
+                          <option value="other">Other</option>
+                        </Select>
+                        {costErrors.category && <FormErrorMessage>{costErrors.category}</FormErrorMessage>}
+                      </FormControl>
+                      
+                      <FormControl isRequired isInvalid={!!costErrors.description}>
+                        <FormLabel>Description</FormLabel>
+                        <Input
+                          name="description"
+                          value={costData.description}
+                          onChange={handleCostChange}
+                          placeholder="Enter cost description"
+                        />
+                        {costErrors.description && <FormErrorMessage>{costErrors.description}</FormErrorMessage>}
+                      </FormControl>
+                      
+                      <FormControl isRequired isInvalid={!!costErrors.amount}>
+                        <FormLabel>Amount</FormLabel>
+                        <NumberInput
+                          value={costData.amount}
+                          onChange={(value) => handleCostNumberChange('amount', value)}
+                          min={0}
+                          step={1000}
+                        >
+                          <NumberInputField />
+                          <NumberInputStepper>
+                            <NumberIncrementStepper />
+                            <NumberDecrementStepper />
+                          </NumberInputStepper>
+                        </NumberInput>
+                        {costErrors.amount && <FormErrorMessage>{costErrors.amount}</FormErrorMessage>}
+                        <FormHelperText>
+                          {formatCurrency(costData.amount)}
+                        </FormHelperText>
+                      </FormControl>
+                      
+                      <FormControl isRequired isInvalid={!!costErrors.date}>
+                        <FormLabel>Date</FormLabel>
+                        <Input
+                          name="date"
+                          type="date"
+                          value={costData.date}
+                          onChange={handleCostChange}
+                        />
+                        {costErrors.date && <FormErrorMessage>{costErrors.date}</FormErrorMessage>}
+                      </FormControl>
+                      
+                      <FormControl>
+                        <FormLabel>Status</FormLabel>
+                        <Select
+                          name="status"
+                          value={costData.status}
+                          onChange={handleCostChange}
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="approved">Approved</option>
+                          <option value="rejected">Rejected</option>
+                        </Select>
+                      </FormControl>
+                      
+                      <Button
+                        leftIcon={<FiPlusCircle />}
+                        colorScheme="blue"
+                        variant="outline"
+                        onClick={handleAddCost}
+                        isLoading={isAddingCost}
+                        mt={2}
+                      >
+                        Add Cost
+                      </Button>
+                    </VStack>
+                  </Box>
+                  
+                  <Divider my={3} />
+                </>
+              )}
+              
+              <FormControl isInvalid={!!errors.progress}>
+                <FormLabel>Project Progress (%)</FormLabel>
+                <HStack>
+                  <NumberInput
+                    value={formData.progress}
+                    onChange={(value) => handleNumberChange('progress', value)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    w="100px"
+                  >
+                    <NumberInputField />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  <Slider
+                    flex="1"
+                    value={formData.progress}
+                    onChange={(value) => handleNumberChange('progress', value)}
+                    min={0}
+                    max={100}
+                    step={1}
+                  >
+                    <SliderTrack>
+                      <SliderFilledTrack />
+                    </SliderTrack>
+                    <SliderThumb />
+                  </Slider>
+                  <Text width="60px" textAlign="right">{formData.progress}%</Text>
+                </HStack>
+                {errors.progress && <FormErrorMessage>{errors.progress}</FormErrorMessage>}
+                <FormHelperText>
+                  Project completion percentage based on your assessment
+                </FormHelperText>
+              </FormControl>
+              
+              <FormControl isInvalid={!!errors.totalCosts}>
+                <FormLabel>Total Costs</FormLabel>
                 <NumberInput
-                  value={formData.progress}
-                  onChange={(value) => handleNumberChange('progress', value)}
+                  value={formData.totalCosts}
+                  onChange={(value) => handleNumberChange('totalCosts', value)}
                   min={0}
-                  max={100}
-                  step={1}
-                  w="100px"
+                  step={1000}
+                  isReadOnly={selectedProjectData !== null}
                 >
                   <NumberInputField />
                   <NumberInputStepper>
@@ -783,133 +1010,158 @@ const WipForm = ({
                     <NumberDecrementStepper />
                   </NumberInputStepper>
                 </NumberInput>
-                <Slider
-                  flex="1"
-                  value={formData.progress}
-                  onChange={(value) => handleNumberChange('progress', value)}
+                {errors.totalCosts && <FormErrorMessage>{errors.totalCosts}</FormErrorMessage>}
+                <FormHelperText>
+                  Total costs incurred for this project: {formatCurrency(formData.totalCosts)}
+                  {selectedProjectData && (
+                    <Text fontSize="xs" color="gray.500">
+                      (This value is calculated from actual project costs and cannot be edited directly)
+                    </Text>
+                  )}
+                  <Text fontSize="xs" color={formData.totalCosts === 0 ? "red.500" : "gray.500"}>
+                    {formData.totalCosts === 0 ? 
+                      "Warning: Project must have costs before billing can be recorded" : 
+                      "Costs must be recorded before billing for proper WIP calculation"}
+                  </Text>
+                </FormHelperText>
+              </FormControl>
+              
+              <FormControl isInvalid={!!errors.totalBilled}>
+                <FormLabel>Total Billed</FormLabel>
+                <NumberInput
+                  value={formData.totalBilled}
+                  onChange={(value) => handleNumberChange('totalBilled', value)}
                   min={0}
-                  max={100}
-                  step={1}
+                  step={1000}
+                  isReadOnly={selectedProjectData !== null}
+                  isDisabled={formData.totalCosts === 0}
                 >
-                  <SliderTrack>
-                    <SliderFilledTrack />
-                  </SliderTrack>
-                  <SliderThumb />
-                </Slider>
-                <Text width="60px" textAlign="right">{formData.progress}%</Text>
-              </HStack>
-              {errors.progress && <FormErrorMessage>{errors.progress}</FormErrorMessage>}
-              <FormHelperText>
-                Project completion percentage based on your assessment
-              </FormHelperText>
-            </FormControl>
-            
-            <FormControl isInvalid={!!errors.totalCosts}>
-              <FormLabel>Total Costs</FormLabel>
-              <NumberInput
-                value={formData.totalCosts}
-                onChange={(value) => handleNumberChange('totalCosts', value)}
-                min={0}
-                step={1000}
-                isReadOnly={selectedProjectData !== null}
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+                {errors.totalBilled && <FormErrorMessage>{errors.totalBilled}</FormErrorMessage>}
+                <FormHelperText>
+                  Total amount billed to the client: {formatCurrency(formData.totalBilled)}
+                  {selectedProjectData && (
+                    <Text fontSize="xs" color="gray.500">
+                      (This value is calculated from actual project billings and cannot be edited directly)
+                    </Text>
+                  )}
+                  {formData.totalCosts === 0 && (
+                    <Text fontSize="xs" color="red.500">
+                      Cannot record billing when total costs are zero
+                    </Text>
+                  )}
+                </FormHelperText>
+              </FormControl>
+              
+              <FormControl isInvalid={!!errors.wipValue}>
+                <FormLabel>
+                  WIP Value 
+                  <Tooltip label="WIP Value = Total Costs - Total Billed">
+                    <span> <Icon as={FiInfo} boxSize={4} color="gray.500" /></span>
+                  </Tooltip>
+                </FormLabel>
+                <NumberInput
+                  value={formData.wipValue}
+                  onChange={(value) => handleNumberChange('wipValue', value)}
+                  min={0}
+                  step={1000}
+                  isReadOnly
+                >
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+                {errors.wipValue && <FormErrorMessage>{errors.wipValue}</FormErrorMessage>}
+                <FormHelperText>
+                  Automatically calculated: Total Costs ({formatCurrency(formData.totalCosts)}) - Total Billed ({formatCurrency(formData.totalBilled)}) = {formatCurrency(formData.wipValue)}
+                </FormHelperText>
+              </FormControl>
+              
+              <FormControl>
+                <FormLabel>Notes</FormLabel>
+                <Textarea
+                  name="notes"
+                  value={formData.notes}
+                  onChange={handleChange}
+                  placeholder="Add any notes about this WIP entry..."
+                  rows={3}
+                />
+              </FormControl>
+            </VStack>
+          </ModalBody>
+          
+          <ModalFooter>
+            {/* Add delete button if editing an existing WIP entry */}
+            {project && project.id && (
+              <Button 
+                colorScheme="red" 
+                variant="outline" 
+                mr="auto"
+                onClick={() => setIsDeleteDialogOpen(true)}
+                isDisabled={isSubmitting}
               >
-                <NumberInputField />
-                <NumberInputStepper>
-                  <NumberIncrementStepper />
-                  <NumberDecrementStepper />
-                </NumberInputStepper>
-              </NumberInput>
-              {errors.totalCosts && <FormErrorMessage>{errors.totalCosts}</FormErrorMessage>}
-              <FormHelperText>
-                Total costs incurred for this project: {formatCurrency(formData.totalCosts)}
-                {selectedProjectData && (
-                  <Text fontSize="xs" color="gray.500">
-                    (This value is calculated from actual project costs and cannot be edited directly)
-                  </Text>
-                )}
-              </FormHelperText>
-            </FormControl>
+                Delete WIP
+              </Button>
+            )}
             
-            <FormControl isInvalid={!!errors.totalBilled}>
-              <FormLabel>Total Billed</FormLabel>
-              <NumberInput
-                value={formData.totalBilled}
-                onChange={(value) => handleNumberChange('totalBilled', value)}
-                min={0}
-                step={1000}
-                isReadOnly={selectedProjectData !== null}
+            <Button variant="ghost" onClick={onClose} isDisabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button 
+              colorScheme="blue" 
+              ml={3} 
+              onClick={handleSubmit}
+              isLoading={isSubmitting}
+              loadingText="Saving"
+            >
+              Save
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+      
+      {/* Delete confirmation dialog */}
+      <AlertDialog
+        isOpen={isDeleteDialogOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={() => setIsDeleteDialogOpen(false)}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Delete WIP Data
+            </AlertDialogHeader>
+
+            <AlertDialogBody>
+              Are you sure you want to delete this WIP data? This will remove all WIP transactions and history for this project.
+              This action cannot be undone.
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={() => setIsDeleteDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                colorScheme="red" 
+                onClick={handleDeleteWip} 
+                ml={3}
+                isLoading={isDeleting}
+                loadingText="Deleting"
               >
-                <NumberInputField />
-                <NumberInputStepper>
-                  <NumberIncrementStepper />
-                  <NumberDecrementStepper />
-                </NumberInputStepper>
-              </NumberInput>
-              {errors.totalBilled && <FormErrorMessage>{errors.totalBilled}</FormErrorMessage>}
-              <FormHelperText>
-                Total amount billed to the client: {formatCurrency(formData.totalBilled)}
-                {selectedProjectData && (
-                  <Text fontSize="xs" color="gray.500">
-                    (This value is calculated from actual project billings and cannot be edited directly)
-                  </Text>
-                )}
-              </FormHelperText>
-            </FormControl>
-            
-            <FormControl isInvalid={!!errors.wipValue}>
-              <FormLabel>
-                WIP Value 
-                <Tooltip label="WIP Value = Total Costs - Total Billed">
-                  <span> <Icon as={FiInfo} boxSize={4} color="gray.500" /></span>
-                </Tooltip>
-              </FormLabel>
-              <NumberInput
-                value={formData.wipValue}
-                onChange={(value) => handleNumberChange('wipValue', value)}
-                min={0}
-                step={1000}
-                isReadOnly
-              >
-                <NumberInputField />
-                <NumberInputStepper>
-                  <NumberIncrementStepper />
-                  <NumberDecrementStepper />
-                </NumberInputStepper>
-              </NumberInput>
-              {errors.wipValue && <FormErrorMessage>{errors.wipValue}</FormErrorMessage>}
-              <FormHelperText>
-                Automatically calculated: Total Costs ({formatCurrency(formData.totalCosts)}) - Total Billed ({formatCurrency(formData.totalBilled)}) = {formatCurrency(formData.wipValue)}
-              </FormHelperText>
-            </FormControl>
-            
-            <FormControl>
-              <FormLabel>Notes</FormLabel>
-              <Textarea
-                name="notes"
-                value={formData.notes}
-                onChange={handleChange}
-                placeholder="Add any notes about this WIP entry..."
-                rows={3}
-              />
-            </FormControl>
-          </VStack>
-        </ModalBody>
-        
-        <ModalFooter>
-          <Button variant="ghost" mr={3} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button 
-            colorScheme="blue" 
-            onClick={handleSubmit}
-            isLoading={isSubmitting}
-            isDisabled={loadingProjects || (!project && !formData.projectId) || (showAddCostForm && formData.totalCosts === 0)}
-          >
-            {project ? 'Update' : 'Save'}
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+                Delete
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
+    </>
   );
 };
 

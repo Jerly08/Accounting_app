@@ -13,6 +13,7 @@ const { developmentLogger, productionLogger } = require('./middleware/requestLog
 // Import routes
 const clientRoutes = require('./routes/clients');
 const accountRoutes = require('./routes/accounts');
+const chartOfAccountsRoutes = require('./routes/chartofaccounts');
 const projectRoutes = require('./routes/projects');
 const billingRoutes = require('./routes/billings');
 const assetRoutes = require('./routes/assets');
@@ -76,6 +77,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/accounts', accountRoutes);
+app.use('/api/chartofaccounts', chartOfAccountsRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/billings', billingRoutes);
 app.use('/api/assets', assetRoutes);
@@ -88,6 +90,40 @@ app.use('/api/balance-sheet', balanceSheetRoutes);
 app.use('/api/cash-flow', cashFlowRoutes);
 app.use('/api/reports', reportsRoutes);
 
+// Apply WIP monitoring middleware after routes to avoid conflicts
+app.use((req, res, next) => {
+  // Mencatat rute yang dipanggil untuk debugging jika bukan GET request
+  if (req.method !== 'GET') {
+    logger.info('WIP Monitor detecting a change', {
+      path: req.originalUrl,
+      method: req.method
+    });
+    
+    // Jika ada perubahan pada project, cost, atau billing, kita bisa memproses WIP update di sini
+    if (
+      req.method === 'POST' || 
+      req.method === 'PUT' || 
+      req.method === 'PATCH'
+    ) {
+      if (
+        req.originalUrl.includes('/api/projects') || 
+        req.originalUrl.includes('/api/costs') || 
+        req.originalUrl.includes('/api/billings')
+      ) {
+        logger.info('Change detected that may affect WIP calculations', {
+          endpoint: req.originalUrl
+        });
+        
+        // Di sini kita bisa memanggil service untuk update WIP jika diperlukan
+        // Untuk saat ini, kita hanya mencatat perubahannya
+      }
+    }
+  }
+  
+  // Lanjut ke middleware berikutnya
+  next();
+});
+
 // Test endpoint untuk memeriksa koneksi
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running' });
@@ -98,6 +134,7 @@ app.get('/api/health', (req, res) => {
 const cron = require('node-cron');
 const depreciationService = require('./services/depreciation');
 
+// Daily depreciation update - runs every day at midnight
 cron.schedule('0 0 * * *', async () => {
   logger.info('Running automatic depreciation calculation...');
   try {
@@ -105,6 +142,17 @@ cron.schedule('0 0 * * *', async () => {
     logger.info('Depreciation calculation completed', { result });
   } catch (error) {
     logger.error('Error running depreciation calculation', { error: error.message });
+  }
+});
+
+// Monthly depreciation recording with accounting entries - runs on the 1st of each month
+cron.schedule('0 0 1 * *', async () => {
+  logger.info('Running monthly depreciation recording with accounting entries...');
+  try {
+    const result = await depreciationService.recordMonthlyDepreciation();
+    logger.info('Monthly depreciation recording completed', { result });
+  } catch (error) {
+    logger.error('Error running monthly depreciation recording', { error: error.message });
   }
 });
 

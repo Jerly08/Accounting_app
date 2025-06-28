@@ -26,8 +26,15 @@ const responseTime = (req, res, next) => {
     const elapsedTimeInMs = elapsedHrTime[0] * 1000 + elapsedHrTime[1] / 1000000;
     res.responseTime = elapsedTimeInMs.toFixed(3);
     
-    // Log request menggunakan logger
-    logger.request(req, res, res.responseTime);
+    // Log request menggunakan logger.info daripada logger.request yang tidak ada
+    logger.info(`${req.method} ${req.originalUrl || req.url} ${res.statusCode}`, {
+      method: req.method,
+      url: req.originalUrl || req.url,
+      statusCode: res.statusCode,
+      responseTime: `${res.responseTime}ms`,
+      userAgent: req.get('user-agent'),
+      ip: req.ip
+    });
   });
   
   next();

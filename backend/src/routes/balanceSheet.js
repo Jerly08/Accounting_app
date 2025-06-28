@@ -1,14 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
+const { PrismaClient } = require('@prisma/client');
 const balanceSheetService = require('../services/balanceSheet');
+
+const prisma = new PrismaClient();
 
 /**
  * @route   GET /api/balance-sheet
  * @desc    Get balance sheet data for a specific date
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const { date } = req.query;
     const result = await balanceSheetService.generateBalanceSheet(date);
@@ -32,7 +35,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get comparative balance sheet data between two dates
  * @access  Private
  */
-router.get('/comparative', authenticate, async (req, res) => {
+router.get('/comparative', auth, async (req, res) => {
   try {
     const { currentDate, previousDate } = req.query;
     

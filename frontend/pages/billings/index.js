@@ -27,30 +27,40 @@ import {
   Stack,
   FormControl,
   FormLabel,
+  Tooltip,
 } from '@chakra-ui/react';
-import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus, FiDownload, FiEye } from 'react-icons/fi';
+import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus, FiDownload, FiEye, FiInfo, FiRefreshCw } from 'react-icons/fi';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/auth/ProtectedRoute';
 import BillingForm from '../../components/billings/BillingForm';
+import BillingStatusModal from '../../components/billings/BillingStatusModal';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import EmptyState from '../../components/common/EmptyState';
+import { InfoOutlineIcon } from '@chakra-ui/icons';
 
 // Payment status colors
 const STATUS_COLORS = {
-  'unpaid': 'red',
-  'partially_paid': 'orange',
+  'pending': 'yellow',
+  'unpaid': 'orange',
   'paid': 'green',
+  'rejected': 'red',
 };
 
 const BillingsPage = () => {
   const router = useRouter();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { 
+    isOpen: isStatusModalOpen, 
+    onOpen: onStatusModalOpen, 
+    onClose: onStatusModalClose 
+  } = useDisclosure();
   const [billings, setBillings] = useState([]);
   const [projects, setProjects] = useState([]);
   const [selectedBilling, setSelectedBilling] = useState(null);
+  const [billingForStatusChange, setBillingForStatusChange] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -238,19 +248,41 @@ const BillingsPage = () => {
   // Handle view invoice
   const handleViewInvoice = (billing) => {
     if (billing.invoice) {
-      const invoiceUrl = billing.invoice.startsWith('http') 
-        ? billing.invoice 
-        : `${process.env.NEXT_PUBLIC_API_URL}${billing.invoice}`;
-      window.open(invoiceUrl, '_blank');
+      // Open invoice in new tab
+      window.open(`${process.env.NEXT_PUBLIC_API_URL}/uploads/invoices/${billing.invoice}`, '_blank');
     } else {
       toast({
-        title: 'No Invoice',
-        description: 'This billing does not have an invoice attached',
+        title: 'Invoice Not Available',
+        description: 'This billing does not have an invoice attached.',
         status: 'info',
         duration: 3000,
         isClosable: true,
       });
     }
+  };
+
+  // Handle status change
+  const handleStatusChange = (billing) => {
+    // Check if status can be changed
+    if (billing.status === 'paid' || billing.status === 'rejected') {
+      toast({
+        title: 'Status Tidak Dapat Diubah',
+        description: `Tagihan dengan status "${billing.status}" tidak dapat diubah lagi.`,
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    setBillingForStatusChange(billing);
+    onStatusModalOpen();
+  };
+
+  // Handle successful status change
+  const handleStatusChangeSuccess = () => {
+    fetchData();
+    onStatusModalClose();
   };
 
   // Navigate to project detail
@@ -265,6 +297,69 @@ const BillingsPage = () => {
     setStartDateFilter('');
     setEndDateFilter('');
     setSearchTerm('');
+  };
+
+  // Add this to the table header row
+  const renderBillingTable = () => {
+    return (
+      <Table variant="simple" size="sm">
+        <Thead bg="gray.50">
+          <Tr>
+            <Th>Project</Th>
+            <Th>Date</Th>
+            <Th isNumeric>Amount</Th>
+            <Th isNumeric>%</Th>
+            <Th>Status</Th>
+            <Th>
+              <HStack spacing={1}>
+                <Text>Actions</Text>
+                <Tooltip 
+                  label="Billings automatically create journal entries in the financial system" 
+                  placement="top"
+                >
+                  <InfoOutlineIcon boxSize={3} color="gray.500" />
+                </Tooltip>
+              </HStack>
+            </Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {/* ... existing code ... */}
+        </Tbody>
+      </Table>
+    );
+  };
+
+  // Update the status badge to include accounting information
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case 'pending':
+        return (
+          <Tooltip label="Status awal, belum ada transaksi keuangan">
+            <Badge colorScheme="yellow">Pending</Badge>
+          </Tooltip>
+        );
+      case 'paid':
+        return (
+          <Tooltip label="Jurnal: Debit Kas/Bank, Kredit Piutang Usaha">
+            <Badge colorScheme="green">Paid</Badge>
+          </Tooltip>
+        );
+      case 'unpaid':
+        return (
+          <Tooltip label="Jurnal: Debit Piutang Usaha, Kredit Pendapatan">
+            <Badge colorScheme="orange">Unpaid</Badge>
+          </Tooltip>
+        );
+      case 'rejected':
+        return (
+          <Tooltip label="Jurnal dibatalkan/dibalik">
+            <Badge colorScheme="red">Rejected</Badge>
+          </Tooltip>
+        );
+      default:
+        return <Badge>{status}</Badge>;
+    }
   };
 
   return (
@@ -305,9 +400,10 @@ const BillingsPage = () => {
             maxW={{ md: '200px' }}
           >
             <option value="">All statuses</option>
+            <option value="pending">Pending</option>
             <option value="unpaid">Unpaid</option>
-            <option value="partially_paid">Partially Paid</option>
             <option value="paid">Paid</option>
+            <option value="rejected">Rejected</option>
           </Select>
 
           <Select
@@ -414,11 +510,7 @@ const BillingsPage = () => {
                   <Td>{formatPercentage(billing.percentage)}</Td>
                   <Td isNumeric fontWeight="semibold">{formatCurrency(billing.amount)}</Td>
                   <Td>
-                    <Badge 
-                      colorScheme={STATUS_COLORS[billing.status] || 'gray'}
-                    >
-                      {billing.status.replace('_', ' ').charAt(0).toUpperCase() + billing.status.replace('_', ' ').slice(1)}
-                    </Badge>
+                    {getStatusBadge(billing.status)}
                   </Td>
                   <Td>
                     <Menu>
@@ -435,6 +527,13 @@ const BillingsPage = () => {
                           isDisabled={!billing.invoice}
                         >
                           View Invoice
+                        </MenuItem>
+                        <MenuItem 
+                          icon={<FiRefreshCw />} 
+                          onClick={() => handleStatusChange(billing)}
+                          isDisabled={billing.status === 'paid' || billing.status === 'rejected'}
+                        >
+                          Ubah Status
                         </MenuItem>
                         <MenuItem 
                           icon={<FiEdit />} 
@@ -468,6 +567,16 @@ const BillingsPage = () => {
           billing={selectedBilling}
           onSubmitSuccess={handleFormSuccess}
           projects={projects}
+        />
+      )}
+
+      {/* Billing Status Modal */}
+      {isStatusModalOpen && (
+        <BillingStatusModal
+          isOpen={isStatusModalOpen}
+          onClose={onStatusModalClose}
+          billing={billingForStatusChange}
+          onStatusChange={handleStatusChangeSuccess}
         />
       )}
     </Box>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Heading,
@@ -32,154 +32,127 @@ import {
   StatLabel,
   StatNumber,
   Progress,
+  Checkbox,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
+  Container,
+  VStack,
+  Spacer,
+  Tooltip,
 } from '@chakra-ui/react';
-import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiPlus } from 'react-icons/fi';
+import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiPlus, FiChevronLeft, FiChevronRight, FiCalendar, FiDownload } from 'react-icons/fi';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
-import ProtectedRoute from '../../components/auth/ProtectedRoute';
 import FixedAssetForm from '../../components/financial/FixedAssetForm';
-import LoadingSpinner from '../../components/common/LoadingSpinner';
-import ErrorAlert from '../../components/common/ErrorAlert';
-import EmptyState from '../../components/common/EmptyState';
+import FixedAssetDepreciation from '../../components/financial/FixedAssetDepreciation';
+import { formatCurrency } from '../../utils/formatters';
+import { CSVLink } from 'react-csv';
 
 const FixedAssetsPage = () => {
-  const router = useRouter();
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isAuthenticated, token } = useAuth();
+  const toast = useToast();
   const [assets, setAssets] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [deleteAssetId, setDeleteAssetId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const { token, isAuthenticated } = useAuth();
-  const toast = useToast();
+  const [sortField, setSortField] = useState('acquisitionDate');
+  const [sortDirection, setSortDirection] = useState('desc');
 
-  // Format currency
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0,
-    }).format(amount);
-  };
+  // Modal controls
+  const {
+    isOpen: isFormOpen,
+    onOpen: onFormOpen,
+    onClose: onFormClose,
+  } = useDisclosure();
 
-  // Format date
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('id-ID', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    }).format(date);
-  };
+  const {
+    isOpen: isDepreciationOpen,
+    onOpen: onDepreciationOpen,
+    onClose: onDepreciationClose,
+  } = useDisclosure();
 
-  // Calculate depreciation percentage
-  const calculateDepreciationPercentage = (value, accumulatedDepreciation) => {
-    if (!value || value === 0) return 0;
-    const percentage = (accumulatedDepreciation / value) * 100;
-    return Math.min(percentage, 100); // Cap at 100%
-  };
+  const {
+    isOpen: isDeleteAlertOpen,
+    onOpen: onDeleteAlertOpen,
+    onClose: onDeleteAlertClose,
+  } = useDisclosure();
 
-  // Get formatted category name
-  const getCategoryName = (categoryValue) => {
-    if (!categoryValue) return 'N/A';
-    
-    const categoryMap = {
-      'equipment': 'Equipment',
-      'vehicle': 'Vehicle',
-      'building': 'Building',
-      'land': 'Land',
-      'furniture': 'Furniture',
-      'other': 'Other'
-    };
-    
-    return categoryMap[categoryValue] || categoryValue.charAt(0).toUpperCase() + categoryValue.slice(1);
-  };
+  const cancelRef = useRef();
 
-  // Fetch fixed assets
-  const fetchAssets = async () => {
-    if (!token || !isAuthenticated) {
-      setError('You must be logged in to view fixed assets');
-      setLoading(false);
-      return;
+  // Fetch assets when component mounts
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchAssets();
     }
+  }, [isAuthenticated]);
 
+  // Fetch assets from API
+  const fetchAssets = async () => {
     try {
-      setLoading(true);
-      
-      // Build query parameters
-      const params = new URLSearchParams();
-      if (categoryFilter) params.append('category', categoryFilter);
-      
-      // Fetch fixed assets
-      const response = await axios.get(
-        `/api/assets?${params.toString()}`,
-        {
+      setIsLoading(true);
+      const response = await axios.get('/api/assets', {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        }
-      );
-      
-      setAssets(response.data.data || []);
-      setError(null);
-    } catch (error) {
-      console.error('Error fetching fixed assets:', error);
-      
-      if (error.response?.status === 401) {
-        setError('Your session has expired. Please login again.');
-      } else {
-        setError('Failed to load fixed assets. Please try again later.');
+      });
+
+      if (response.data.success) {
+        setAssets(response.data.data);
       }
+    } catch (error) {
+      console.error('Error fetching assets:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to fetch assets',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (token && isAuthenticated) {
-      fetchAssets();
-    }
-  }, [token, isAuthenticated, categoryFilter]);
+  // Handle asset form submission success
+  const handleFormSuccess = () => {
+    fetchAssets();
+  };
 
-  // Filter assets based on search term
-  const filteredAssets = assets.filter((asset) => {
-    return searchTerm === '' || 
-      asset.assetName.toLowerCase().includes(searchTerm.toLowerCase());
-  });
+  // Open asset form for editing
+  const handleEditAsset = (asset) => {
+    setSelectedAsset(asset);
+    onFormOpen();
+  };
 
-  // Calculate totals
-  const totalValue = filteredAssets.reduce((sum, asset) => sum + parseFloat(asset.value), 0);
-  const totalAccumulatedDepreciation = filteredAssets.reduce(
-    (sum, asset) => sum + parseFloat(asset.accumulatedDepreciation), 0
-  );
-  const totalBookValue = filteredAssets.reduce(
-    (sum, asset) => sum + parseFloat(asset.bookValue), 0
-  );
+  // Open depreciation modal
+  const handleOpenDepreciation = (asset) => {
+    setSelectedAsset(asset);
+    onDepreciationOpen();
+  };
 
-  // Handle delete asset
-  const handleDelete = async (assetId) => {
-    if (!token || !isAuthenticated) {
-      toast({
-        title: 'Authentication Error',
-        description: 'You must be logged in to perform this action',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
+  // Confirm asset deletion
+  const handleDeleteConfirm = (assetId) => {
+    setDeleteAssetId(assetId);
+    onDeleteAlertOpen();
+  };
 
-    if (window.confirm('Are you sure you want to delete this asset? This action cannot be undone.')) {
-      try {
-        await axios.delete(`/api/assets/${assetId}`, {
+  // Delete asset
+  const handleDeleteAsset = async () => {
+    try {
+      const response = await axios.delete(`/api/assets/${deleteAssetId}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
+      if (response.data.success) {
         toast({
           title: 'Success',
           description: 'Asset deleted successfully',
@@ -187,90 +160,207 @@ const FixedAssetsPage = () => {
           duration: 3000,
           isClosable: true,
         });
-
-        // Refresh the assets list
         fetchAssets();
+      }
       } catch (error) {
         console.error('Error deleting asset:', error);
-        
-        if (error.response?.status === 401) {
-          toast({
-            title: 'Session Expired',
-            description: 'Your session has expired. Please login again.',
-            status: 'error',
-            duration: 5000,
-            isClosable: true,
-          });
-        } else {
-          const errorMessage = error.response?.data?.message || 'Failed to delete asset';
           toast({
             title: 'Error',
-            description: errorMessage,
+        description: error.response?.data?.message || 'Failed to delete asset',
             status: 'error',
             duration: 5000,
             isClosable: true,
           });
-        }
-      }
+    } finally {
+      onDeleteAlertClose();
+      setDeleteAssetId(null);
     }
   };
 
-  // Open form to add/edit asset
-  const handleEditAsset = (asset = null) => {
-    setSelectedAsset(asset);
-    onOpen();
+  // Format date
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('id-ID', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    }).format(date);
   };
 
-  // Handle successful form submission
-  const handleFormSuccess = () => {
-    fetchAssets();
-    onClose();
+  // Get category label
+  const getCategoryName = (category) => {
+    const categories = {
+      equipment: 'Equipment',
+      vehicle: 'Vehicle',
+      building: 'Building',
+      land: 'Land',
+      furniture: 'Furniture',
+      other: 'Other',
+    };
+    return categories[category] || category;
   };
 
-  // Reset filters
-  const resetFilters = () => {
-    setCategoryFilter('');
-    setSearchTerm('');
+  // Get badge color based on asset status
+  const getAssetStatusColor = (asset) => {
+    if (!asset) return 'gray';
+    
+    // If book value is 0 or very small, consider it fully depreciated
+    if (asset.bookValue <= 0.01) return 'red';
+    
+    // Calculate depreciation percentage
+    const depreciationPercentage = (asset.accumulatedDepreciation / asset.value) * 100;
+    
+    if (depreciationPercentage >= 90) return 'orange';
+    if (depreciationPercentage >= 75) return 'yellow';
+    if (depreciationPercentage >= 50) return 'green';
+    return 'blue';
   };
+
+  // Get asset status label
+  const getAssetStatusLabel = (asset) => {
+    if (!asset) return 'Unknown';
+    
+    if (asset.bookValue <= 0.01) return 'Fully Depreciated';
+    
+    const depreciationPercentage = (asset.accumulatedDepreciation / asset.value) * 100;
+    
+    if (depreciationPercentage >= 90) return 'Near End of Life';
+    if (depreciationPercentage >= 75) return 'Advanced Depreciation';
+    if (depreciationPercentage >= 50) return 'Half Depreciated';
+    if (depreciationPercentage > 0) return 'Active';
+    return 'New';
+  };
+
+  // Handle sort change
+  const handleSort = (field) => {
+    if (sortField === field) {
+      // Toggle direction if same field
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field and default to ascending
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Filter and sort assets
+  const filteredAssets = assets
+    .filter((asset) => {
+      // Apply search filter
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = 
+        !searchTerm || 
+        asset.assetName.toLowerCase().includes(searchLower) ||
+        asset.description?.toLowerCase().includes(searchLower) ||
+        asset.location?.toLowerCase().includes(searchLower) ||
+        asset.assetTag?.toLowerCase().includes(searchLower);
+      
+      // Apply category filter
+      const matchesCategory = !categoryFilter || asset.category === categoryFilter;
+      
+      return matchesSearch && matchesCategory;
+    })
+    .sort((a, b) => {
+      // Apply sorting
+      let comparison = 0;
+      
+      switch (sortField) {
+        case 'assetName':
+          comparison = a.assetName.localeCompare(b.assetName);
+          break;
+        case 'category':
+          comparison = a.category.localeCompare(b.category);
+          break;
+        case 'acquisitionDate':
+          comparison = new Date(a.acquisitionDate) - new Date(b.acquisitionDate);
+          break;
+        case 'value':
+          comparison = a.value - b.value;
+          break;
+        case 'bookValue':
+          comparison = a.bookValue - b.bookValue;
+          break;
+        default:
+          comparison = 0;
+      }
+      
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+  // Prepare CSV data for export
+  const csvData = [
+    ['Asset Name', 'Category', 'Acquisition Date', 'Original Value', 'Accumulated Depreciation', 'Book Value', 'Useful Life (years)', 'Location', 'Asset Tag', 'Description'],
+    ...filteredAssets.map((asset) => [
+      asset.assetName,
+      getCategoryName(asset.category),
+      formatDate(asset.acquisitionDate),
+      asset.value,
+      asset.accumulatedDepreciation,
+      asset.bookValue,
+      asset.usefulLife,
+      asset.location || '',
+      asset.assetTag || '',
+      asset.description || '',
+    ]),
+  ];
 
   return (
-    <Box p={4}>
-      <Flex justify="space-between" align="center" mb={6}>
-        <Heading as="h1" size="lg">
-          Fixed Assets Management
-        </Heading>
-        <Button 
-          colorScheme="teal" 
-          leftIcon={<FiPlus />}
-          onClick={() => handleEditAsset()}
-          isDisabled={!isAuthenticated}
-        >
-          Add Asset
-        </Button>
+    <Container maxW="container.xl" py={8}>
+      <VStack spacing={6} align="stretch">
+        <Flex alignItems="center" justifyContent="space-between" wrap="wrap" gap={4}>
+          <Heading as="h1" size="xl">Fixed Assets</Heading>
+          
+          <HStack spacing={4}>
+            <Button 
+              leftIcon={<FiPlus />}
+              colorScheme="blue"
+              onClick={() => {
+                setSelectedAsset(null);
+                onFormOpen();
+              }}
+            >
+              Add Asset
+            </Button>
+            
+            <CSVLink
+              data={csvData}
+              filename="fixed-assets.csv"
+              className="hidden"
+              id="download-csv"
+            >
+              Download CSV
+            </CSVLink>
+            
+            <Tooltip label="Export to CSV">
+              <IconButton
+                icon={<FiDownload />}
+                aria-label="Export to CSV"
+                onClick={() => document.getElementById('download-csv').click()}
+              />
+            </Tooltip>
+        </HStack>
       </Flex>
 
-      {/* Filters */}
-      <Box mb={6} p={4} bg="white" borderRadius="md" shadow="sm">
-        <Heading as="h3" size="sm" mb={4}>Filters</Heading>
-        <Stack direction={{ base: 'column', md: 'row' }} spacing={4} mb={4}>
-          <InputGroup maxW={{ md: '300px' }}>
+        <Flex direction={{ base: 'column', md: 'row' }} gap={4} mb={4}>
+          <InputGroup maxW={{ base: '100%', md: '300px' }}>
             <InputLeftElement pointerEvents="none">
               <FiSearch color="gray.300" />
             </InputLeftElement>
             <Input
-              placeholder="Search asset names..."
+              placeholder="Search assets..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </InputGroup>
 
           <Select
-            placeholder="Filter by category"
+            placeholder="All Categories"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            maxW={{ md: '200px' }}
+            maxW={{ base: '100%', md: '200px' }}
           >
-            <option value="">All categories</option>
+            <option value="">All Categories</option>
             <option value="equipment">Equipment</option>
             <option value="vehicle">Vehicle</option>
             <option value="building">Building</option>
@@ -278,141 +368,181 @@ const FixedAssetsPage = () => {
             <option value="furniture">Furniture</option>
             <option value="other">Other</option>
           </Select>
-
-          <Button 
-            variant="outline" 
-            onClick={resetFilters}
-            size="md"
-          >
-            Reset Filters
-          </Button>
-        </Stack>
-      </Box>
-
-      {/* Summary Cards */}
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Acquisition Value</StatLabel>
-          <StatNumber>{formatCurrency(totalValue)}</StatNumber>
-        </Stat>
+        </Flex>
         
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Accumulated Depreciation</StatLabel>
-          <StatNumber color="red.500">{formatCurrency(totalAccumulatedDepreciation)}</StatNumber>
-        </Stat>
-        
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Book Value</StatLabel>
-          <StatNumber color="blue.500">{formatCurrency(totalBookValue)}</StatNumber>
-        </Stat>
-      </SimpleGrid>
-
-      {error && <ErrorAlert message={error} />}
-
-      {loading ? (
-        <LoadingSpinner text="Loading fixed assets..." />
-      ) : filteredAssets.length === 0 ? (
-        <EmptyState 
-          title="No fixed assets found" 
-          message={searchTerm || categoryFilter ? 
-            'Try adjusting your search filters.' : 
-            'Click the "Add Asset" button to register your first fixed asset.'}
-          actionText={!searchTerm && !categoryFilter ? "Add Asset" : null}
-          onAction={!searchTerm && !categoryFilter ? () => handleEditAsset() : null}
-        />
-      ) : (
-        <Box overflowX="auto">
-          <Table variant="simple" bg="white" shadow="sm">
-            <Thead>
-              <Tr>
-                <Th>Asset Name</Th>
-                <Th>Category</Th>
-                <Th>Acquisition Date</Th>
-                <Th isNumeric>Value</Th>
-                <Th>Useful Life</Th>
-                <Th isNumeric>Accumulated Depreciation</Th>
-                <Th isNumeric>Book Value</Th>
-                <Th>Depreciation</Th>
-                <Th>Actions</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {filteredAssets.map((asset) => (
-                <Tr key={asset.id}>
-                  <Td fontWeight="medium">{asset.assetName}</Td>
-                  <Td>
-                    <Badge>
-                      {getCategoryName(asset.category)}
-                    </Badge>
-                  </Td>
-                  <Td>{formatDate(asset.acquisitionDate)}</Td>
-                  <Td isNumeric>{formatCurrency(asset.value)}</Td>
-                  <Td>{asset.usefulLife} years</Td>
-                  <Td isNumeric color="red.500">{formatCurrency(asset.accumulatedDepreciation)}</Td>
-                  <Td isNumeric fontWeight="semibold">{formatCurrency(asset.bookValue)}</Td>
-                  <Td width="150px">
-                    <Box>
-                      <Progress 
-                        value={calculateDepreciationPercentage(asset.value, asset.accumulatedDepreciation)} 
-                        size="sm" 
-                        colorScheme="orange" 
-                        borderRadius="full"
-                      />
-                      <Text fontSize="xs" mt={1} textAlign="right">
-                        {calculateDepreciationPercentage(asset.value, asset.accumulatedDepreciation).toFixed(1)}%
-                      </Text>
-                    </Box>
-                  </Td>
-                  <Td>
-                    <Menu>
-                      <MenuButton
-                        as={IconButton}
-                        icon={<FiMoreVertical />}
-                        variant="ghost"
-                        size="sm"
-                      />
-                      <MenuList>
-                        <MenuItem 
-                          icon={<FiEdit />} 
-                          onClick={() => handleEditAsset(asset)}
-                        >
-                          Edit
-                        </MenuItem>
-                        <MenuItem 
-                          icon={<FiTrash2 />} 
-                          color="red.500"
-                          onClick={() => handleDelete(asset.id)}
-                        >
-                          Delete
-                        </MenuItem>
-                      </MenuList>
-                    </Menu>
-                  </Td>
+          <Box overflowX="auto">
+          <Table variant="simple">
+              <Thead>
+                <Tr>
+                <Th 
+                  cursor="pointer" 
+                  onClick={() => handleSort('assetName')}
+                >
+                  Asset Name {sortField === 'assetName' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </Th>
+                <Th 
+                  cursor="pointer" 
+                  onClick={() => handleSort('category')}
+                >
+                  Category {sortField === 'category' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </Th>
+                <Th 
+                  cursor="pointer" 
+                  onClick={() => handleSort('acquisitionDate')}
+                >
+                  Acquisition Date {sortField === 'acquisitionDate' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </Th>
+                <Th 
+                  isNumeric 
+                  cursor="pointer" 
+                  onClick={() => handleSort('value')}
+                >
+                  Original Value {sortField === 'value' && (sortDirection === 'asc' ? '↑' : '↓')}
+                  </Th>
+                  <Th isNumeric>Accumulated Depreciation</Th>
+                <Th 
+                  isNumeric 
+                  cursor="pointer" 
+                  onClick={() => handleSort('bookValue')}
+                >
+                  Book Value {sortField === 'bookValue' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </Th>
+                <Th>Status</Th>
+                  <Th>Actions</Th>
                 </Tr>
-              ))}
-            </Tbody>
-          </Table>
+              </Thead>
+              <Tbody>
+              {isLoading ? (
+                <Tr>
+                  <Td colSpan={8} textAlign="center">Loading...</Td>
+                </Tr>
+              ) : filteredAssets.length === 0 ? (
+                <Tr>
+                  <Td colSpan={8} textAlign="center">No assets found</Td>
+                </Tr>
+              ) : (
+                filteredAssets.map((asset) => (
+                  <Tr key={asset.id}>
+                    <Td>{asset.assetName}</Td>
+                    <Td>{getCategoryName(asset.category)}</Td>
+                    <Td>{formatDate(asset.acquisitionDate)}</Td>
+                    <Td isNumeric>{formatCurrency(asset.value)}</Td>
+                    <Td isNumeric>{formatCurrency(asset.accumulatedDepreciation)}</Td>
+                    <Td isNumeric>{formatCurrency(asset.bookValue)}</Td>
+                    <Td>
+                      <Badge colorScheme={getAssetStatusColor(asset)}>
+                        {getAssetStatusLabel(asset)}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <Menu>
+                        <MenuButton
+                          as={IconButton}
+                          icon={<FiMoreVertical />}
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Actions"
+                        />
+                        <MenuList>
+                          <MenuItem 
+                            icon={<FiEdit />} 
+                            onClick={() => handleEditAsset(asset)}
+                          >
+                            Edit Asset
+                          </MenuItem>
+                          <MenuItem 
+                            icon={<FiCalendar />} 
+                            onClick={() => handleOpenDepreciation(asset)}
+                          >
+                            Manage Depreciation
+                          </MenuItem>
+                          <MenuItem 
+                            icon={<FiTrash2 />} 
+                            onClick={() => handleDeleteConfirm(asset.id)}
+                            color="red.500"
+                          >
+                            Delete Asset
+                          </MenuItem>
+                        </MenuList>
+                      </Menu>
+                    </Td>
+                  </Tr>
+                ))
+              )}
+              </Tbody>
+            </Table>
+          </Box>
+          
+        <Box>
+          <Text>
+            Total Assets: {filteredAssets.length}
+          </Text>
+          <Text>
+            Total Original Value: {formatCurrency(
+              filteredAssets.reduce((sum, asset) => {
+                // Safely parse the asset value
+                const value = parseFloat(asset.value);
+                return isNaN(value) ? sum : sum + value;
+              }, 0)
+            )}
+          </Text>
+          <Text>
+            Total Book Value: {formatCurrency(
+              filteredAssets.reduce((sum, asset) => {
+                // Safely parse the book value
+                const bookValue = parseFloat(asset.bookValue);
+                return isNaN(bookValue) ? sum : sum + bookValue;
+              }, 0)
+            )}
+          </Text>
         </Box>
-      )}
+      </VStack>
 
-      {/* Fixed Asset Form Modal */}
-      {isOpen && (
+      {/* Asset Form Modal */}
         <FixedAssetForm
-          isOpen={isOpen}
-          onClose={onClose}
+        isOpen={isFormOpen}
+        onClose={onFormClose}
           asset={selectedAsset}
           onSubmitSuccess={handleFormSuccess}
         />
-      )}
-    </Box>
+
+      {/* Depreciation Modal */}
+      <FixedAssetDepreciation
+        asset={selectedAsset}
+        onClose={onDepreciationClose}
+        isOpen={isDepreciationOpen}
+        onSuccess={handleFormSuccess}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        isOpen={isDeleteAlertOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={onDeleteAlertClose}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Delete Asset
+            </AlertDialogHeader>
+
+            <AlertDialogBody>
+              Are you sure you want to delete this asset? This action cannot be undone.
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={onDeleteAlertClose}>
+                Cancel
+              </Button>
+              <Button colorScheme="red" onClick={handleDeleteAsset} ml={3}>
+                Delete
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
+    </Container>
   );
 };
 
-// Wrap with ProtectedRoute
-const ProtectedFixedAssetsPage = () => (
-  <ProtectedRoute>
-    <FixedAssetsPage />
-  </ProtectedRoute>
-);
-
-export default ProtectedFixedAssetsPage; 
+export default FixedAssetsPage; 

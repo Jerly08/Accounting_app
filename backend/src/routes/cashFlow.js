@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
 const cashFlowService = require('../services/cashFlow');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  * @desc    Get cash flow data for a specific period
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
@@ -49,7 +49,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get comparative cash flow data between two periods
  * @access  Private
  */
-router.get('/comparative', authenticate, async (req, res) => {
+router.get('/comparative', auth, async (req, res) => {
   try {
     const { currentStartDate, currentEndDate, previousStartDate, previousEndDate } = req.query;
     
@@ -86,7 +86,7 @@ router.get('/comparative', authenticate, async (req, res) => {
  * @desc    Debug endpoint to check raw transaction data
  * @access  Private
  */
-router.get('/debug', authenticate, async (req, res) => {
+router.get('/debug', auth, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
@@ -191,7 +191,7 @@ router.get('/debug', authenticate, async (req, res) => {
  * @desc    Debug endpoint to check financing transactions
  * @access  Private
  */
-router.get('/debug-financing', authenticate, async (req, res) => {
+router.get('/debug-financing', auth, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
@@ -282,6 +282,237 @@ router.get('/debug-financing', authenticate, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Error during financing debug',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/cash-flow/debug-cash
+ * @desc    Debug endpoint to check cash transactions
+ * @access  Private
+ */
+router.get('/debug-cash', auth, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both startDate and endDate are required'
+      });
+    }
+    
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    
+    // Set time to beginning and end of day
+    startDateObj.setHours(0, 0, 0, 0);
+    endDateObj.setHours(23, 59, 59, 999);
+    
+    // Define cash/bank accounts (1101-1105)
+    const cashBankAccountCodes = ['1101', '1102', '1103', '1104', '1105'];
+    
+    // Get all cash transactions within the period
+    const cashTransactions = await prisma.transaction.findMany({
+      where: {
+        date: {
+          gte: startDateObj,
+          lte: endDateObj
+        },
+        accountCode: {
+          in: cashBankAccountCodes
+        }
+      },
+      include: {
+        chartofaccount: true,
+        project: true
+      },
+      orderBy: {
+        date: 'asc'
+      }
+    });
+    
+    // Process transactions for better understanding
+    const processedTransactions = cashTransactions.map(transaction => {
+      const { id, type, amount, description, date, accountCode, chartofaccount, project } = transaction;
+      const parsedAmount = parseFloat(amount);
+      const isInflow = type === 'DEBIT' || type === 'debit';
+      const cashFlowAmount = isInflow ? parsedAmount : -parsedAmount;
+      
+      return {
+        id,
+        date: date.toISOString(),
+        description,
+        accountCode,
+        accountName: chartofaccount ? chartofaccount.name : 'Unknown',
+        type,
+        originalAmount: parsedAmount,
+        cashFlowAmount,
+        isInflow,
+        project: project ? { id: project.id, name: project.name } : null
+      };
+    });
+    
+    // Calculate totals
+    const totalInflow = processedTransactions
+      .filter(t => t.isInflow)
+      .reduce((sum, t) => sum + t.cashFlowAmount, 0);
+      
+    const totalOutflow = processedTransactions
+      .filter(t => !t.isInflow)
+      .reduce((sum, t) => sum + t.cashFlowAmount, 0);
+      
+    const netCashFlow = totalInflow + totalOutflow;
+    
+    res.json({
+      success: true,
+      data: {
+        period: {
+          startDate: startDateObj.toISOString().split('T')[0],
+          endDate: endDateObj.toISOString().split('T')[0]
+        },
+        transactions: processedTransactions,
+        summary: {
+          count: processedTransactions.length,
+          totalInflow,
+          totalOutflow,
+          netCashFlow
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Debug cash error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error during debug',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/cash-flow/debug-transactions
+ * @desc    Debug endpoint to check cash transactions in detail
+ * @access  Private
+ */
+router.get('/debug-transactions', auth, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both startDate and endDate are required'
+      });
+    }
+    
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    
+    // Set time to beginning and end of day
+    startDateObj.setHours(0, 0, 0, 0);
+    endDateObj.setHours(23, 59, 59, 999);
+    
+    // Define cash/bank accounts (1101-1105)
+    const cashBankAccountCodes = ['1101', '1102', '1103', '1104', '1105'];
+    
+    // Get all cash transactions within the period
+    const cashTransactions = await prisma.transaction.findMany({
+      where: {
+        date: {
+          gte: startDateObj,
+          lte: endDateObj
+        },
+        accountCode: {
+          in: cashBankAccountCodes
+        }
+      },
+      include: {
+        chartofaccount: true,
+        project: true
+      },
+      orderBy: {
+        date: 'asc'
+      }
+    });
+    
+    // Process transactions for better understanding
+    const processedTransactions = cashTransactions.map(transaction => {
+      const { id, type, amount, description, date, accountCode, chartofaccount, project } = transaction;
+      const parsedAmount = parseFloat(amount);
+      const isInflow = type === 'DEBIT' || type === 'debit';
+      const cashFlowAmount = isInflow ? parsedAmount : -parsedAmount;
+      
+      return {
+        id,
+        date: date.toISOString().split('T')[0],
+        description,
+        accountCode,
+        accountName: chartofaccount ? chartofaccount.name : 'Unknown',
+        type,
+        originalAmount: parsedAmount,
+        cashFlowAmount,
+        isInflow,
+        project: project ? { id: project.id, name: project.name } : null
+      };
+    });
+    
+    // Group by account
+    const transactionsByAccount = {};
+    processedTransactions.forEach(transaction => {
+      if (!transactionsByAccount[transaction.accountCode]) {
+        transactionsByAccount[transaction.accountCode] = {
+          accountName: transaction.accountName,
+          transactions: [],
+          totalInflow: 0,
+          totalOutflow: 0
+        };
+      }
+      
+      const account = transactionsByAccount[transaction.accountCode];
+      account.transactions.push(transaction);
+      
+      if (transaction.isInflow) {
+        account.totalInflow += transaction.cashFlowAmount;
+      } else {
+        account.totalOutflow += transaction.cashFlowAmount;
+      }
+    });
+    
+    // Calculate totals
+    const totalInflow = processedTransactions
+      .filter(t => t.isInflow)
+      .reduce((sum, t) => sum + t.cashFlowAmount, 0);
+      
+    const totalOutflow = processedTransactions
+      .filter(t => !t.isInflow)
+      .reduce((sum, t) => sum + t.cashFlowAmount, 0);
+      
+    const netCashFlow = totalInflow + totalOutflow;
+    
+    res.json({
+      success: true,
+      data: {
+        period: {
+          startDate: startDateObj.toISOString().split('T')[0],
+          endDate: endDateObj.toISOString().split('T')[0]
+        },
+        summary: {
+          count: processedTransactions.length,
+          totalInflow,
+          totalOutflow,
+          netCashFlow
+        },
+        transactionsByAccount,
+        transactions: processedTransactions
+      }
+    });
+  } catch (error) {
+    console.error('Debug transactions error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error during debug',
       error: error.message 
     });
   }

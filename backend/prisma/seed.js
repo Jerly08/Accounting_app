@@ -608,27 +608,8 @@ async function main() {
     try {
       // Seed Fixed Assets
       console.log('Seeding Fixed Assets...');
-      for (const asset of fixedAssets) {
-        // Format tanggal untuk SQL
-        const acquisitionDate = asset.acquisitionDate.toISOString().slice(0, 19).replace('T', ' ');
-        
-        // Cek apakah asset sudah ada berdasarkan nama
-        const existingAssets = await prisma.$queryRaw`
-          SELECT * FROM fixedasset WHERE assetName = ${asset.assetName}
-        `;
-        
-        if (existingAssets.length === 0) {
-          // Pastikan category tidak null
-          const category = asset.category || 'equipment';
-          
-          // Jika belum ada, buat baru
-          await prisma.$executeRaw`
-            INSERT INTO fixedasset (assetName, category, acquisitionDate, value, usefulLife, accumulatedDepreciation, bookValue, createdAt, updatedAt)
-            VALUES (${asset.assetName}, ${category}, ${acquisitionDate}, ${asset.value}, ${asset.usefulLife}, ${asset.accumulatedDepreciation}, ${asset.bookValue}, NOW(), NOW())
-          `;
-        }
-      }
-      console.log(`${fixedAssets.length} fixed assets processed.`);
+      // Kita akan menggunakan script terpisah untuk seed fixed assets
+      console.log('Fixed assets will be seeded using separate script: npm run seed:fixedassets');
     } catch (error) {
       console.error('Error seeding fixed assets:', error);
       throw error;

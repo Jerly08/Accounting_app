@@ -24,12 +24,13 @@ import {
   useDisclosure,
   Text,
 } from '@chakra-ui/react';
-import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus, FiDownload } from 'react-icons/fi';
+import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus, FiDownload, FiRefreshCw } from 'react-icons/fi';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/auth/ProtectedRoute';
 import ProjectCostForm from '../../components/projects/ProjectCostForm';
+import ProjectCostStatusModal, { VALID_TRANSITIONS } from '../../components/projects/ProjectCostStatusModal';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import EmptyState from '../../components/common/EmptyState';
@@ -46,17 +47,20 @@ const COST_CATEGORIES = {
 
 // Payment status colors
 const STATUS_COLORS = {
-  'pending': 'orange',
-  'approved': 'green',
+  'pending': 'yellow',
+  'unpaid': 'orange',
+  'paid': 'green',
   'rejected': 'red',
 };
 
 const ProjectCostsPage = () => {
   const router = useRouter();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isStatusModalOpen, onOpen: onStatusModalOpen, onClose: onStatusModalClose } = useDisclosure();
   const [costs, setCosts] = useState([]);
   const [projects, setProjects] = useState([]);
   const [selectedCost, setSelectedCost] = useState(null);
+  const [costForStatusChange, setCostForStatusChange] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -228,6 +232,14 @@ const ProjectCostsPage = () => {
             duration: 5000,
             isClosable: true,
           });
+        } else if (error.response?.status === 403) {
+          toast({
+            title: 'Action Not Allowed',
+            description: 'Only project costs with "pending" status can be deleted.',
+            status: 'warning',
+            duration: 5000,
+            isClosable: true,
+          });
         } else {
           const errorMessage = error.response?.data?.message || 'Failed to delete cost entry';
           toast({
@@ -244,6 +256,18 @@ const ProjectCostsPage = () => {
 
   // Open form to add/edit cost
   const handleEditCost = (cost = null) => {
+    // Jika ini adalah edit (bukan add new) dan status bukan unpaid, tampilkan pesan
+    if (cost && cost.status !== 'unpaid') {
+      toast({
+        title: 'Edit Not Allowed',
+        description: 'Only project costs with "unpaid" status can be edited.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
     setSelectedCost(cost);
     onOpen();
   };
@@ -280,6 +304,30 @@ const ProjectCostsPage = () => {
 
   // Calculate total filtered costs
   const totalFilteredCosts = filteredCosts.reduce((sum, cost) => sum + parseFloat(cost.amount), 0);
+
+  // Handle status change
+  const handleStatusChange = (cost) => {
+    // Check if status can be changed
+    if (cost.status === 'paid' || cost.status === 'rejected') {
+      toast({
+        title: 'Status Tidak Dapat Diubah',
+        description: `Biaya proyek dengan status "${cost.status}" tidak dapat diubah lagi.`,
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    setCostForStatusChange(cost);
+    onStatusModalOpen();
+  };
+
+  // Handle successful status change
+  const handleStatusChangeSuccess = () => {
+    fetchCosts();
+    onStatusModalClose();
+  };
 
   return (
     <Box p={4}>
@@ -341,7 +389,8 @@ const ProjectCostsPage = () => {
         >
           <option value="">All statuses</option>
           <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
+          <option value="unpaid">Unpaid</option>
+          <option value="paid">Paid</option>
           <option value="rejected">Rejected</option>
         </Select>
       </Flex>
@@ -418,11 +467,20 @@ const ProjectCostsPage = () => {
                           size="sm"
                         />
                         <MenuList>
+                          {cost.status === 'unpaid' && (
+                            <MenuItem 
+                              icon={<FiEdit />} 
+                              onClick={() => handleEditCost(cost)}
+                            >
+                              Edit
+                            </MenuItem>
+                          )}
                           <MenuItem 
-                            icon={<FiEdit />} 
-                            onClick={() => handleEditCost(cost)}
+                            icon={<FiRefreshCw />} 
+                            onClick={() => handleStatusChange(cost)}
+                            isDisabled={cost.status === 'paid' || cost.status === 'rejected'}
                           >
-                            Edit
+                            Ubah Status
                           </MenuItem>
                           <MenuItem 
                             icon={<FiDownload />} 
@@ -431,13 +489,15 @@ const ProjectCostsPage = () => {
                           >
                             View Receipt
                           </MenuItem>
-                          <MenuItem 
-                            icon={<FiTrash2 />} 
-                            color="red.500"
-                            onClick={() => handleDelete(cost.id)}
-                          >
-                            Delete
-                          </MenuItem>
+                          {cost.status === 'unpaid' && (
+                            <MenuItem 
+                              icon={<FiTrash2 />} 
+                              color="red.500"
+                              onClick={() => handleDelete(cost.id)}
+                            >
+                              Delete
+                            </MenuItem>
+                          )}
                         </MenuList>
                       </Menu>
                     </Td>
@@ -459,6 +519,16 @@ const ProjectCostsPage = () => {
           onSubmitSuccess={handleFormSuccess}
           projects={projects}
           categories={COST_CATEGORIES}
+        />
+      )}
+
+      {/* Project Cost Status Modal */}
+      {isStatusModalOpen && (
+        <ProjectCostStatusModal
+          isOpen={isStatusModalOpen}
+          onClose={onStatusModalClose}
+          cost={costForStatusChange}
+          onStatusChange={handleStatusChangeSuccess}
         />
       )}
     </Box>

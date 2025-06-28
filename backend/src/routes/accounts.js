@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-const { authenticate, authorize } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
 
 const prisma = new PrismaClient();
 
@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  * @desc    Get all chart of accounts with optional filtering
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const { search, type, limit, page } = req.query;
     const pageNumber = parseInt(page) || 1;
@@ -68,11 +68,37 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/accounts/type/:type
+ * @desc    Get accounts by type
+ * @access  Private
+ */
+router.get('/type/:type', auth, async (req, res) => {
+  try {
+    const { type } = req.params;
+    const accounts = await prisma.chartofaccount.findMany({
+      where: { type },
+      orderBy: { code: 'asc' }
+    });
+
+    res.json({
+      success: true,
+      data: accounts
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat mengambil data akun',
+      error: error.message 
+    });
+  }
+});
+
+/**
  * @route   GET /api/accounts/:code
  * @desc    Get single account by code
  * @access  Private
  */
-router.get('/:code', authenticate, async (req, res) => {
+router.get('/:code', auth, async (req, res) => {
   try {
     const { code } = req.params;
     const account = await prisma.chartofaccount.findUnique({
@@ -105,39 +131,13 @@ router.get('/:code', authenticate, async (req, res) => {
 });
 
 /**
- * @route   GET /api/accounts/type/:type
- * @desc    Get accounts by type
- * @access  Private
- */
-router.get('/type/:type', authenticate, async (req, res) => {
-  try {
-    const { type } = req.params;
-    const accounts = await prisma.chartofaccount.findMany({
-      where: { type },
-      orderBy: { code: 'asc' }
-    });
-
-    res.json({
-      success: true,
-      data: accounts
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saat mengambil data akun',
-      error: error.message 
-    });
-  }
-});
-
-/**
  * @route   POST /api/accounts
  * @desc    Create new account
  * @access  Private (Admin only)
  */
-router.post('/', authenticate, authorize(['admin']), async (req, res) => {
+router.post('/', auth, authorize(['admin']), async (req, res) => {
   try {
-    const { code, name, type } = req.body;
+    const { code, name, type, category, subcategory, isCurrentAsset, isCurrentLiability } = req.body;
 
     // Validate required fields
     if (!code || !name || !type) {
@@ -178,45 +178,51 @@ router.post('/', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
-    // Map account type to cashflow category
-    let category = 'Other';
-    switch(type) {
-      case 'Pendapatan':
-        category = 'Income';
-        break;
-      case 'Beban':
-        category = 'Expense';
-        break;
-      case 'Aktiva':
-        category = 'Asset';
-        break;
-      case 'Aset Tetap':
-        category = 'Fixed Asset';
-        break;
-      case 'Kontra Aset':
-        category = 'Contra Asset';
-        break;
-      default:
-        category = 'Other';
+    // Determine cashflow category based on input or account type
+    let cashflowCategory = category || 'Other';
+    if (!category) {
+      switch(type) {
+        case 'Pendapatan':
+          cashflowCategory = 'Income';
+          break;
+        case 'Beban':
+          cashflowCategory = 'Expense';
+          break;
+        case 'Aktiva':
+          cashflowCategory = 'Asset';
+          break;
+        case 'Aset Tetap':
+          cashflowCategory = 'Fixed Asset';
+          break;
+        case 'Kontra Aset':
+          cashflowCategory = 'Contra Asset';
+          break;
+        default:
+          cashflowCategory = 'Other';
+      }
     }
 
     // Create cashflow category entry first
     await prisma.cashflow_category.create({
       data: {
         accountCode: code,
-        category: category,
-        subcategory: null,
+        category: cashflowCategory,
+        subcategory: subcategory || null,
         createdAt: new Date(),
         updatedAt: new Date()
       }
     });
 
-    // Create account
+    // Create account with additional fields
     const account = await prisma.chartofaccount.create({
       data: {
         code,
         name,
         type,
+        category: cashflowCategory,
+        subcategory: subcategory || null,
+        isCurrentAsset: isCurrentAsset !== undefined ? isCurrentAsset : true,
+        isCurrentLiability: isCurrentLiability !== undefined ? isCurrentLiability : true,
         updatedAt: new Date()
       }
     });
@@ -241,10 +247,10 @@ router.post('/', authenticate, authorize(['admin']), async (req, res) => {
  * @desc    Update account
  * @access  Private (Admin only)
  */
-router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
+router.put('/:code', auth, authorize(['admin']), async (req, res) => {
   try {
     const { code } = req.params;
-    const { name, type } = req.body;
+    const { name, type, category, subcategory, isCurrentAsset, isCurrentLiability } = req.body;
 
     // Check if account exists
     const existingAccount = await prisma.chartofaccount.findUnique({
@@ -258,9 +264,17 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
+    // Validate required fields
+    if (!name || !type) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Nama dan tipe akun wajib diisi' 
+      });
+    }
+
     // Validate account type
     const validTypes = ['Pendapatan', 'Beban', 'Aktiva', 'Aset Tetap', 'Kontra Aset'];
-    if (type && !validTypes.includes(type)) {
+    if (!validTypes.includes(type)) {
       return res.status(400).json({
         success: false,
         message: 'Tipe akun tidak valid',
@@ -268,55 +282,55 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
-    // Map account type to cashflow category if type is changing
-    if (type && type !== existingAccount.type) {
-      let category = 'Other';
+    // Determine cashflow category based on input or account type
+    let cashflowCategory = category || existingAccount.category || 'Other';
+    if (!category && !existingAccount.category) {
       switch(type) {
         case 'Pendapatan':
-          category = 'Income';
+          cashflowCategory = 'Income';
           break;
         case 'Beban':
-          category = 'Expense';
+          cashflowCategory = 'Expense';
           break;
         case 'Aktiva':
-          category = 'Asset';
+          cashflowCategory = 'Asset';
           break;
         case 'Aset Tetap':
-          category = 'Fixed Asset';
+          cashflowCategory = 'Fixed Asset';
           break;
         case 'Kontra Aset':
-          category = 'Contra Asset';
+          cashflowCategory = 'Contra Asset';
           break;
         default:
-          category = 'Other';
+          cashflowCategory = 'Other';
       }
-      
-      // Check if cashflow_category entry exists
-      const existingCategory = await prisma.cashflow_category.findUnique({
-        where: { accountCode: code }
+    }
+
+    // Update cashflow category
+    const existingCashflowCategory = await prisma.cashflow_category.findUnique({
+      where: { accountCode: code }
+    });
+
+    if (existingCashflowCategory) {
+      await prisma.cashflow_category.update({
+        where: { accountCode: code },
+        data: {
+          category: cashflowCategory,
+          subcategory: subcategory || existingCashflowCategory.subcategory,
+          updatedAt: new Date()
+        }
       });
-      
-      if (existingCategory) {
-        // Update existing cashflow category
-        await prisma.cashflow_category.update({
-          where: { accountCode: code },
-          data: {
-            category: category,
-            updatedAt: new Date()
-          }
-        });
-      } else {
-        // Create new cashflow category entry if it doesn't exist
-        await prisma.cashflow_category.create({
-          data: {
-            accountCode: code,
-            category: category,
-            subcategory: null,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          }
-        });
-      }
+    } else {
+      // Create if it doesn't exist
+      await prisma.cashflow_category.create({
+        data: {
+          accountCode: code,
+          category: cashflowCategory,
+          subcategory: subcategory || null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        }
+      });
     }
 
     // Update account
@@ -325,6 +339,10 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
       data: {
         name,
         type,
+        category: cashflowCategory,
+        subcategory: subcategory || existingAccount.subcategory,
+        isCurrentAsset: isCurrentAsset !== undefined ? isCurrentAsset : existingAccount.isCurrentAsset,
+        isCurrentLiability: isCurrentLiability !== undefined ? isCurrentLiability : existingAccount.isCurrentLiability,
         updatedAt: new Date()
       }
     });
@@ -349,7 +367,7 @@ router.put('/:code', authenticate, authorize(['admin']), async (req, res) => {
  * @desc    Delete account
  * @access  Private (Admin only)
  */
-router.delete('/:code', authenticate, authorize(['admin']), async (req, res) => {
+router.delete('/:code', auth, authorize(['admin']), async (req, res) => {
   try {
     const { code } = req.params;
     

@@ -46,9 +46,16 @@ import {
   MenuItem,
   Code,
   Tooltip,
+  AlertTitle,
+  AlertDescription,
+  Accordion,
+  AccordionItem,
+  AccordionButton,
+  AccordionPanel,
+  AccordionIcon,
 } from '@chakra-ui/react';
 import { useRouter } from 'next/router';
-import { FiArrowLeft, FiFilter, FiCalendar, FiChevronDown } from 'react-icons/fi';
+import { FiArrowLeft, FiFilter, FiCalendar, FiChevronDown, FiInfo } from 'react-icons/fi';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/auth/ProtectedRoute';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -317,127 +324,220 @@ const CashFlowPage = () => {
 
   // Render operating activities
   const renderOperatingActivities = () => {
-    if (!cashFlowData.operating || !cashFlowData.operating.activities || cashFlowData.operating.activities.length === 0) {
+    if (!cashFlowData?.operating?.activities?.length) {
       return (
-        <Box p={4} textAlign="center">
-          <Text>No operating activities recorded for the selected period.</Text>
+        <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+          <Heading as="h3" size="md" mb={4}>
+            Aktivitas Operasional
+          </Heading>
+          <Text>Tidak ada aktivitas operasional dalam periode ini.</Text>
         </Box>
       );
     }
-    
+
     return (
-      <Table variant="simple" size="sm">
-        <Thead>
-          <Tr>
-            <Th>Date</Th>
-            <Th>Description</Th>
-            <Th>Account</Th>
-            <Th isNumeric>Amount</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {cashFlowData.operating.activities.map((activity, index) => (
-            <Tr key={`operating-${index}`}>
-              <Td>{formatDate(activity.date)}</Td>
-              <Td>{activity.description}</Td>
-              <Td>{activity.accountName}</Td>
-              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(activity.amount)}
+      <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+        <Heading as="h3" size="md" mb={4}>
+          Aktivitas Operasional
+        </Heading>
+        <Table variant="simple" size="sm">
+          <Thead>
+            <Tr>
+              <Th>Tanggal</Th>
+              <Th>Deskripsi</Th>
+              <Th>Akun</Th>
+              <Th>Tipe</Th>
+              <Th isNumeric>Jumlah</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {cashFlowData.operating.activities.map((item, index) => {
+              // Determine if this is an inflow or outflow
+              const isInflow = item.amount > 0;
+              const displayType = isInflow ? 'DEBIT' : 'CREDIT';
+              const displayAmount = Math.abs(item.amount);
+              
+              return (
+                <Tr key={index}>
+                  <Td>{formatDate(item.date)}</Td>
+                  <Td>{item.description}</Td>
+                  <Td>
+                    {item.accountCode && (
+                      <Tooltip label={item.accountName}>
+                        <Badge colorScheme="blue">{item.accountCode}</Badge>
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td>
+                    <Badge colorScheme={isInflow ? 'green' : 'red'}>
+                      {displayType}
+                    </Badge>
+                  </Td>
+                  <Td isNumeric>
+                    <Text color={isInflow ? 'green.500' : 'red.500'} fontWeight="medium">
+                      {isInflow ? '+' : '-'}{formatCurrency(displayAmount)}
+                    </Text>
+                  </Td>
+                </Tr>
+              );
+            })}
+            <Tr fontWeight="bold">
+              <Td colSpan={4}>Total Aktivitas Operasional</Td>
+              <Td isNumeric>
+                <Text color={cashFlowData.operating.total >= 0 ? 'green.500' : 'red.500'}>
+                  {cashFlowData.operating.total >= 0 ? '+' : ''}{formatCurrency(cashFlowData.operating.total)}
+                </Text>
               </Td>
             </Tr>
-          ))}
-          <Tr fontWeight="bold" bg="gray.50">
-            <Td colSpan={3}>Total Operating Activities</Td>
-            <Td isNumeric color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalOperating)}
-            </Td>
-          </Tr>
-        </Tbody>
-      </Table>
+          </Tbody>
+        </Table>
+      </Box>
     );
   };
 
   // Render investing activities
   const renderInvestingActivities = () => {
-    if (!cashFlowData.investing || !cashFlowData.investing.activities || cashFlowData.investing.activities.length === 0) {
+    if (!cashFlowData?.investing?.activities?.length) {
       return (
-        <Box p={4} textAlign="center">
-          <Text>No investing activities recorded for the selected period.</Text>
+        <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+          <Heading as="h3" size="md" mb={4}>
+            Aktivitas Investasi
+          </Heading>
+          <Text>Tidak ada aktivitas investasi dalam periode ini.</Text>
         </Box>
       );
     }
-    
+
     return (
-      <Table variant="simple" size="sm">
-        <Thead>
-          <Tr>
-            <Th>Date</Th>
-            <Th>Description</Th>
-            <Th>Account</Th>
-            <Th isNumeric>Amount</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {cashFlowData.investing.activities.map((activity, index) => (
-            <Tr key={`investing-${index}`}>
-              <Td>{formatDate(activity.date)}</Td>
-              <Td>{activity.description}</Td>
-              <Td>{activity.accountName}</Td>
-              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(activity.amount)}
+      <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+        <Heading as="h3" size="md" mb={4}>
+          Aktivitas Investasi
+        </Heading>
+        <Table variant="simple" size="sm">
+          <Thead>
+            <Tr>
+              <Th>Tanggal</Th>
+              <Th>Deskripsi</Th>
+              <Th>Akun</Th>
+              <Th>Tipe</Th>
+              <Th isNumeric>Jumlah</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {cashFlowData.investing.activities.map((item, index) => {
+              // Determine if this is an inflow or outflow
+              const isInflow = item.amount > 0;
+              const displayType = isInflow ? 'DEBIT' : 'CREDIT';
+              const displayAmount = Math.abs(item.amount);
+              
+              return (
+                <Tr key={index}>
+                  <Td>{formatDate(item.date)}</Td>
+                  <Td>{item.description}</Td>
+                  <Td>
+                    {item.accountCode && (
+                      <Tooltip label={item.accountName}>
+                        <Badge colorScheme="blue">{item.accountCode}</Badge>
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td>
+                    <Badge colorScheme={isInflow ? 'green' : 'red'}>
+                      {displayType}
+                    </Badge>
+                  </Td>
+                  <Td isNumeric>
+                    <Text color={isInflow ? 'green.500' : 'red.500'} fontWeight="medium">
+                      {isInflow ? '+' : '-'}{formatCurrency(displayAmount)}
+                    </Text>
+                  </Td>
+                </Tr>
+              );
+            })}
+            <Tr fontWeight="bold">
+              <Td colSpan={4}>Total Aktivitas Investasi</Td>
+              <Td isNumeric>
+                <Text color={cashFlowData.investing.total >= 0 ? 'green.500' : 'red.500'}>
+                  {cashFlowData.investing.total >= 0 ? '+' : ''}{formatCurrency(cashFlowData.investing.total)}
+                </Text>
               </Td>
             </Tr>
-          ))}
-          <Tr fontWeight="bold" bg="gray.50">
-            <Td colSpan={3}>Total Investing Activities</Td>
-            <Td isNumeric color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalInvesting)}
-            </Td>
-          </Tr>
-        </Tbody>
-      </Table>
+          </Tbody>
+        </Table>
+      </Box>
     );
   };
 
   // Render financing activities
   const renderFinancingActivities = () => {
-    if (!cashFlowData.financing || !cashFlowData.financing.activities || cashFlowData.financing.activities.length === 0) {
+    if (!cashFlowData?.financing?.activities?.length) {
       return (
-        <Box p={4} textAlign="center">
-          <Text>No financing activities recorded for the selected period.</Text>
+        <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+          <Heading as="h3" size="md" mb={4}>
+            Aktivitas Pendanaan
+          </Heading>
+          <Text>Tidak ada aktivitas pendanaan dalam periode ini.</Text>
         </Box>
       );
     }
-    
+
     return (
-      <Table variant="simple" size="sm">
-        <Thead>
-          <Tr>
-            <Th>Date</Th>
-            <Th>Description</Th>
-            <Th>Account</Th>
-            <Th isNumeric>Amount</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {cashFlowData.financing.activities.map((activity, index) => (
-            <Tr key={`financing-${index}`}>
-              <Td>{formatDate(activity.date)}</Td>
-              <Td>{activity.description}</Td>
-              <Td>{activity.accountName}</Td>
-              <Td isNumeric color={activity.amount >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(activity.amount)}
+      <Box p={4} bg="white" borderRadius="md" shadow="sm" mb={6}>
+        <Heading as="h3" size="md" mb={4}>
+          Aktivitas Pendanaan
+        </Heading>
+        <Table variant="simple" size="sm">
+          <Thead>
+            <Tr>
+              <Th>Tanggal</Th>
+              <Th>Deskripsi</Th>
+              <Th>Akun</Th>
+              <Th>Tipe</Th>
+              <Th isNumeric>Jumlah</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {cashFlowData.financing.activities.map((item, index) => {
+              // Determine if this is an inflow or outflow
+              const isInflow = item.amount > 0;
+              const displayType = isInflow ? 'DEBIT' : 'CREDIT';
+              const displayAmount = Math.abs(item.amount);
+              
+              return (
+                <Tr key={index}>
+                  <Td>{formatDate(item.date)}</Td>
+                  <Td>{item.description}</Td>
+                  <Td>
+                    {item.accountCode && (
+                      <Tooltip label={item.accountName}>
+                        <Badge colorScheme="blue">{item.accountCode}</Badge>
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td>
+                    <Badge colorScheme={isInflow ? 'green' : 'red'}>
+                      {displayType}
+                    </Badge>
+                  </Td>
+                  <Td isNumeric>
+                    <Text color={isInflow ? 'green.500' : 'red.500'} fontWeight="medium">
+                      {isInflow ? '+' : '-'}{formatCurrency(displayAmount)}
+                    </Text>
+                  </Td>
+                </Tr>
+              );
+            })}
+            <Tr fontWeight="bold">
+              <Td colSpan={4}>Total Aktivitas Pendanaan</Td>
+              <Td isNumeric>
+                <Text color={cashFlowData.financing.total >= 0 ? 'green.500' : 'red.500'}>
+                  {cashFlowData.financing.total >= 0 ? '+' : ''}{formatCurrency(cashFlowData.financing.total)}
+                </Text>
               </Td>
             </Tr>
-          ))}
-          <Tr fontWeight="bold" bg="gray.50">
-            <Td colSpan={3}>Total Financing Activities</Td>
-            <Td isNumeric color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
-              {formatCurrency(totals.totalFinancing)}
-            </Td>
-          </Tr>
-        </Tbody>
-      </Table>
+          </Tbody>
+        </Table>
+      </Box>
     );
   };
 
@@ -451,25 +551,25 @@ const CashFlowPage = () => {
             <Tr>
               <Td fontWeight="bold">Cash Flow from Operating Activities</Td>
               <Td isNumeric color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalOperating)}
+                {totals.totalOperating >= 0 ? '+' : ''}{formatCurrency(totals.totalOperating)}
               </Td>
             </Tr>
             <Tr>
               <Td fontWeight="bold">Cash Flow from Investing Activities</Td>
               <Td isNumeric color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalInvesting)}
+                {totals.totalInvesting >= 0 ? '+' : ''}{formatCurrency(totals.totalInvesting)}
               </Td>
             </Tr>
             <Tr>
               <Td fontWeight="bold">Cash Flow from Financing Activities</Td>
               <Td isNumeric color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalFinancing)}
+                {totals.totalFinancing >= 0 ? '+' : ''}{formatCurrency(totals.totalFinancing)}
               </Td>
             </Tr>
             <Tr fontWeight="bold" fontSize="lg">
               <Td>Net Cash Flow</Td>
               <Td isNumeric color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.netCashFlow)}
+                {totals.netCashFlow >= 0 ? '+' : ''}{formatCurrency(totals.netCashFlow)}
               </Td>
             </Tr>
           </Tbody>
@@ -695,6 +795,237 @@ const CashFlowPage = () => {
     return `${moment(start).format('MMM D, YYYY')} - ${moment(end).format('MMM D, YYYY')}`;
   };
 
+  // Tambahkan komponen informasi Cash Flow setelah filter date
+  const renderCashFlowInfo = () => {
+    return (
+      <Box mb={6} p={4} bg="white" borderRadius="md" shadow="sm">
+        <Heading as="h3" size="sm" mb={3}>
+          Tentang Laporan Arus Kas
+        </Heading>
+        <Alert status="info" mb={3} borderRadius="md">
+          <AlertIcon />
+          <Box>
+            <AlertTitle>Laporan Ini Hanya Mencakup Transaksi Kas Aktual</AlertTitle>
+            <AlertDescription>
+              Laporan arus kas ini hanya mencatat transaksi yang melibatkan akun kas/bank (1101-1105).
+            </AlertDescription>
+          </Box>
+        </Alert>
+        <Text mb={2}>
+          <strong>Cash Inflow (Positif):</strong> Semua transaksi DEBIT ke akun kas/bank (uang masuk) dicatat sebagai nilai positif (+).
+        </Text>
+        <Text mb={2}>
+          <strong>Cash Outflow (Negatif):</strong> Semua transaksi CREDIT dari akun kas/bank (uang keluar) dicatat sebagai nilai negatif (-).
+        </Text>
+        <Text mb={2}>
+          <strong>Transaksi Non-Kas:</strong> Transaksi yang tidak melibatkan kas/bank secara langsung (seperti piutang, penyusutan, atau pendapatan akrual) tidak tercakup dalam laporan ini.
+        </Text>
+        <Text mb={2}>
+          <strong>Kategori Arus Kas:</strong>
+        </Text>
+        <Box pl={4}>
+          <Text mb={1}>• <strong>Operating:</strong> Aktivitas operasional bisnis sehari-hari</Text>
+          <Text mb={1}>• <strong>Investing:</strong> Pembelian atau penjualan aset jangka panjang</Text>
+          <Text mb={1}>• <strong>Financing:</strong> Perubahan pada modal dan pinjaman</Text>
+        </Box>
+        <Alert status="warning" mt={3} borderRadius="md">
+          <AlertIcon />
+          <Box>
+            <AlertTitle>Penting untuk Diperhatikan</AlertTitle>
+            <AlertDescription>
+              Nilai positif (+) menunjukkan kas masuk (DEBIT), sedangkan nilai negatif (-) menunjukkan kas keluar (CREDIT).
+              Tipe transaksi asli (seperti "income", "expense", dll) telah distandarisasi menjadi DEBIT/CREDIT untuk kejelasan.
+            </AlertDescription>
+          </Box>
+        </Alert>
+      </Box>
+    );
+  };
+
+  // Tambahkan fungsi untuk mengakses endpoint debug
+  const handleDebugCashFlow = async () => {
+    try {
+      setDebugLoading(true);
+      setDebugError(null);
+
+      const response = await api.get('/api/cash-flow/debug-transactions', {
+        params: {
+          startDate: startDate,
+          endDate: endDate
+        }
+      });
+
+      if (response.data && response.data.success) {
+        setDebugData(response.data.data);
+        setShowDebugModal(true);
+      } else {
+        setDebugError('Failed to fetch debug data');
+      }
+    } catch (error) {
+      console.error('Error fetching debug data:', error);
+      setDebugError(`Error: ${error.message || 'Unknown error'}`);
+    } finally {
+      setDebugLoading(false);
+    }
+  };
+
+  // Tambahkan state untuk debug modal
+  const [showDebugModal, setShowDebugModal] = useState(false);
+  const [debugData, setDebugData] = useState(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugError, setDebugError] = useState(null);
+
+  // Tambahkan komponen modal untuk menampilkan data debug
+  const DebugModal = () => {
+    if (!showDebugModal || !debugData) return null;
+    
+    return (
+      <Box
+        position="fixed"
+        top="0"
+        left="0"
+        right="0"
+        bottom="0"
+        bg="rgba(0,0,0,0.7)"
+        zIndex="1000"
+        p={4}
+        overflow="auto"
+      >
+        <Box
+          bg="white"
+          borderRadius="md"
+          p={4}
+          maxWidth="1000px"
+          mx="auto"
+          my={8}
+        >
+          <Flex justify="space-between" align="center" mb={4}>
+            <Heading size="md">Cash Flow Debug Data</Heading>
+            <Button size="sm" onClick={() => setShowDebugModal(false)}>Close</Button>
+          </Flex>
+          
+          <Box mb={4}>
+            <Text fontWeight="bold">Period: {formatDate(debugData.period.startDate)} - {formatDate(debugData.period.endDate)}</Text>
+          </Box>
+          
+          <Box mb={4} p={3} borderWidth="1px" borderRadius="md">
+            <Heading size="sm" mb={2}>Summary</Heading>
+            <SimpleGrid columns={2} spacing={4}>
+              <Stat>
+                <StatLabel>Total Cash Inflow</StatLabel>
+                <StatNumber color="green.500">{formatCurrency(debugData.summary.totalInflow)}</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Total Cash Outflow</StatLabel>
+                <StatNumber color="red.500">{formatCurrency(debugData.summary.totalOutflow)}</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Net Cash Flow</StatLabel>
+                <StatNumber color={debugData.summary.netCashFlow >= 0 ? "green.500" : "red.500"}>
+                  {formatCurrency(debugData.summary.netCashFlow)}
+                </StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Transaction Count</StatLabel>
+                <StatNumber>{debugData.summary.count}</StatNumber>
+              </Stat>
+            </SimpleGrid>
+          </Box>
+          
+          <Box mb={4}>
+            <Heading size="sm" mb={2}>Transactions by Account</Heading>
+            <Accordion allowMultiple>
+              {Object.entries(debugData.transactionsByAccount).map(([accountCode, accountData]) => (
+                <AccordionItem key={accountCode}>
+                  <AccordionButton>
+                    <Box flex="1" textAlign="left">
+                      <Text fontWeight="bold">{accountCode} - {accountData.accountName}</Text>
+                    </Box>
+                    <Box>
+                      <Badge colorScheme="green" mr={2}>
+                        In: {formatCurrency(accountData.totalInflow)}
+                      </Badge>
+                      <Badge colorScheme="red">
+                        Out: {formatCurrency(accountData.totalOutflow)}
+                      </Badge>
+                    </Box>
+                    <AccordionIcon />
+                  </AccordionButton>
+                  <AccordionPanel>
+                    <Table size="sm" variant="simple">
+                      <Thead>
+                        <Tr>
+                          <Th>Date</Th>
+                          <Th>Description</Th>
+                          <Th>Type</Th>
+                          <Th isNumeric>Amount</Th>
+                          <Th isNumeric>Cash Flow</Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {accountData.transactions.map(tx => (
+                          <Tr key={tx.id}>
+                            <Td>{formatDate(tx.date)}</Td>
+                            <Td>{tx.description}</Td>
+                            <Td>
+                              <Badge colorScheme={tx.isInflow ? "green" : "red"}>
+                                {tx.type}
+                              </Badge>
+                            </Td>
+                            <Td isNumeric>{formatCurrency(tx.originalAmount)}</Td>
+                            <Td isNumeric color={tx.cashFlowAmount >= 0 ? "green.500" : "red.500"}>
+                              {formatCurrency(tx.cashFlowAmount)}
+                            </Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </AccordionPanel>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </Box>
+          
+          <Box mb={4}>
+            <Heading size="sm" mb={2}>All Cash Transactions</Heading>
+            <Table size="sm" variant="simple">
+              <Thead>
+                <Tr>
+                  <Th>Date</Th>
+                  <Th>Account</Th>
+                  <Th>Description</Th>
+                  <Th>Type</Th>
+                  <Th isNumeric>Cash Flow</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {debugData.transactions.map(tx => (
+                  <Tr key={tx.id}>
+                    <Td>{formatDate(tx.date)}</Td>
+                    <Td>
+                      <Tooltip label={tx.accountName}>
+                        <Badge>{tx.accountCode}</Badge>
+                      </Tooltip>
+                    </Td>
+                    <Td>{tx.description}</Td>
+                    <Td>
+                      <Badge colorScheme={tx.isInflow ? "green" : "red"}>
+                        {tx.type}
+                      </Badge>
+                    </Td>
+                    <Td isNumeric color={tx.cashFlowAmount >= 0 ? "green.500" : "red.500"}>
+                      {formatCurrency(tx.cashFlowAmount)}
+                    </Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </Box>
+        </Box>
+      </Box>
+    );
+  };
+
   return (
     <Box p={4}>
       <Flex 
@@ -744,6 +1075,18 @@ const CashFlowPage = () => {
               formatCurrency={formatCurrency}
               formatDate={formatDate}
             />
+            
+            <Tooltip label="Debug Cash Flow Transactions">
+              <Button
+                size="sm"
+                leftIcon={<FiInfo />}
+                onClick={handleDebugCashFlow}
+                isLoading={debugLoading}
+                colorScheme="purple"
+              >
+                Debug
+              </Button>
+            </Tooltip>
           </HStack>
           
           <HStack spacing={2} mt={{ base: 2, md: 0 }}>
@@ -767,6 +1110,9 @@ const CashFlowPage = () => {
           </HStack>
         </Flex>
       </Flex>
+
+      {/* Cash Flow Information */}
+      {renderCashFlowInfo()}
 
       {error && (
         <Alert status="error" mb={6} borderRadius="md">
@@ -798,25 +1144,25 @@ const CashFlowPage = () => {
             <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
               <StatLabel>Operating Cash Flow</StatLabel>
               <StatNumber color={totals.totalOperating >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalOperating)}
+                {totals.totalOperating >= 0 ? '+' : ''}{formatCurrency(totals.totalOperating)}
               </StatNumber>
             </Stat>
             <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
               <StatLabel>Investing Cash Flow</StatLabel>
               <StatNumber color={totals.totalInvesting >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalInvesting)}
+                {totals.totalInvesting >= 0 ? '+' : ''}{formatCurrency(totals.totalInvesting)}
               </StatNumber>
             </Stat>
             <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
               <StatLabel>Financing Cash Flow</StatLabel>
               <StatNumber color={totals.totalFinancing >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.totalFinancing)}
+                {totals.totalFinancing >= 0 ? '+' : ''}{formatCurrency(totals.totalFinancing)}
               </StatNumber>
             </Stat>
             <Stat p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg={cardBg}>
               <StatLabel>Net Cash Flow</StatLabel>
               <StatNumber color={totals.netCashFlow >= 0 ? 'green.500' : 'red.500'}>
-                {formatCurrency(totals.netCashFlow)}
+                {totals.netCashFlow >= 0 ? '+' : ''}{formatCurrency(totals.netCashFlow)}
               </StatNumber>
               <StatHelpText>
                 {totals.netCashFlow >= 0 ? (
@@ -847,6 +1193,8 @@ const CashFlowPage = () => {
           </Tabs>
         </>
       )}
+
+      <DebugModal />
     </Box>
   );
 };

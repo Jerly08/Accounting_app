@@ -37,6 +37,38 @@ This script adds additional transaction data to the database for testing the fin
 npm run seed:transactions
 ```
 
+### 3. WIP Seed Script (`wip-seed.js`)
+
+This script generates comprehensive Work-In-Progress (WIP) data for demonstration and presentation purposes:
+
+- Historical WIP data for existing projects (last 6 months)
+- WIP cashflow projections for the next 6 months
+- Three specialized demo projects with different WIP patterns:
+  - High WIP Construction Project (large unbilled work)
+  - Risky Geotechnical Survey (high risk score)
+  - Well-Managed Soil Testing (declining WIP with regular billing)
+
+**Usage:**
+
+```bash
+npm run seed:wip
+```
+
+### 4. WIP Transaction Seed Script (`wip-transaction-seed.js`)
+
+This script creates the necessary accounting transactions for WIP data to ensure the balance sheet remains balanced:
+
+- Creates WIP Asset account entries (debit)
+- Creates Revenue Recognition entries (credit)
+- Handles Advance from Customers (negative WIP)
+- Ensures proper double-entry accounting for all WIP values
+
+**Usage:**
+
+```bash
+npm run seed:wip-transactions
+```
+
 ## Seeding Process
 
 For a fresh database, follow these steps:
@@ -49,6 +81,16 @@ For a fresh database, follow these steps:
 2. Then run the transaction seed script to add more transaction data:
    ```bash
    npm run seed:transactions
+   ```
+
+3. Run the WIP seed script to generate comprehensive WIP data for presentations:
+   ```bash
+   npm run seed:wip
+   ```
+
+4. Finally, run the WIP transaction seed to create accounting entries for WIP and balance the balance sheet:
+   ```bash
+   npm run seed:wip-transactions
    ```
 
 ## Generated Data
@@ -72,8 +114,17 @@ The transaction seed script generates:
 - 30 expense transactions (with counter transactions)
 - 10 transfer transactions
 
+### WIP Data
+
+The WIP seed script generates:
+- Historical WIP data for all projects (monthly entries for the past 6 months)
+- Future WIP projections (monthly for the next 6 months)
+- Three demo projects with distinct WIP characteristics for presentation purposes
+
 ## Notes
 
 - Running the seed scripts will reset any existing data in the tables they affect
 - The transaction seed script requires the main seed script to be run first
+- The WIP seed script can be run independently but works best after the main seed script
+- The WIP transaction seed script should be run after the WIP seed script to ensure accounting balance
 - All generated dates are in the past to avoid issues with future dates 

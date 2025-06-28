@@ -3,151 +3,122 @@ const prismaUtil = require('../utils/prisma');
 const prisma = prismaUtil.prisma;
 
 // Cache for user data to reduce database queries
-const userCache = {
-  data: {},
-  maxAge: 300000, // 5 minutes
-  timestamps: {}
-};
+// Make it globally accessible
+if (!global.userCache) {
+  global.userCache = {
+    data: {},
+    maxAge: 300000, // 5 minutes
+    timestamps: {}
+  };
+}
+
+// Initialize token blacklist if not exists
+if (!global.tokenBlacklist) {
+  global.tokenBlacklist = new Set();
+}
 
 // Check if user is in cache and still valid
 const getUserFromCache = (userId) => {
-  if (!userCache.data[userId] || !userCache.timestamps[userId]) {
+  if (!global.userCache.data[userId] || !global.userCache.timestamps[userId]) {
     return null;
   }
   
   const now = Date.now();
-  if (now - userCache.timestamps[userId] > userCache.maxAge) {
+  if (now - global.userCache.timestamps[userId] > global.userCache.maxAge) {
     // Cache expired
-    delete userCache.data[userId];
-    delete userCache.timestamps[userId];
+    delete global.userCache.data[userId];
+    delete global.userCache.timestamps[userId];
     return null;
   }
   
-  return userCache.data[userId];
+  return global.userCache.data[userId];
 };
 
 // Add user to cache
 const cacheUser = (user) => {
   if (user && user.id) {
-    userCache.data[user.id] = user;
-    userCache.timestamps[user.id] = Date.now();
+    global.userCache.data[user.id] = user;
+    global.userCache.timestamps[user.id] = Date.now();
   }
 };
 
 /**
  * Middleware to authenticate JWT token
  */
-const authenticate = async (req, res, next) => {
+const auth = async (req, res, next) => {
   try {
     // Get token from header
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'No token provided' 
-      });
-    }
-    
-    const token = authHeader.split(' ')[1];
+    const token = req.header('Authorization')?.replace('Bearer ', '');
     
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid token format' 
-      });
+      return res.status(401).json({ message: 'No authentication token, authorization denied' });
     }
+
+    // Check if token is blacklisted
+    if (global.tokenBlacklist && global.tokenBlacklist.has(token)) {
+      return res.status(401).json({ message: 'Token is invalid or has been logged out' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    try {
-      // Fast path: verify token without database lookup
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secure_jwt_secret_key_for_accounting_app');
-      
-      // Check if we have userId in the decoded token
-      if (!decoded.userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid token payload'
-        });
-      }
-      
-      // Check if user is in cache
-      const cachedUser = getUserFromCache(decoded.userId);
-      if (cachedUser) {
-        req.user = cachedUser;
-        return next();
-      }
-      
-      // If not in cache, get from database
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
+    // For DELETE operations, always fetch fresh user data from database
+    const isDeleteRequest = req.method === 'DELETE';
+    
+    // Get user from cache or database
+    let user = isDeleteRequest ? null : getUserFromCache(decoded.id);
+    
+    if (!user) {
+      // User not in cache or delete request, fetch from database
+      user = await prisma.user.findUnique({
+        where: { id: decoded.id },
         select: {
           id: true,
-          username: true,
-          email: true,
           name: true,
-          role: true
+          email: true,
+          role: true,
+          username: true
         }
       });
       
       if (!user) {
-        return res.status(401).json({ 
-          success: false, 
-          message: 'User not found' 
-        });
+        return res.status(401).json({ message: 'User not found' });
       }
       
       // Add user to cache
       cacheUser(user);
-      
-      // Set user on request
-      req.user = user;
-      next();
-    } catch (jwtError) {
-      console.error('JWT verification error:', jwtError);
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid token' 
-      });
     }
+    
+    // Log user role for debugging
+    console.log(`User ${user.id} (${user.username}) with role ${user.role} accessing ${req.method} ${req.originalUrl}`);
+    
+    // Add user to request object
+    req.user = user;
+    req.token = token;
+    next();
   } catch (error) {
-    console.error('Authentication error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during authentication' 
-    });
+    console.error('Auth middleware error:', error);
+    res.status(401).json({ message: 'Token is not valid' });
   }
 };
 
 /**
  * Middleware to check user role
  */
-const authorize = (role) => {
+const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
-      });
+      return res.status(401).json({ message: 'User not authenticated' });
     }
-    
-    // Check if user has required role
-    if (role === 'admin' && req.user.role !== 'admin') {
+
+    if (!roles.includes(req.user.role)) {
       return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. Admin privileges required.' 
+        message: 'Access denied: insufficient permissions' 
       });
     }
-    
-    // If specific role is required
-    if (role !== 'admin' && req.user.role !== role && req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Access denied. ${role} privileges required.` 
-      });
-    }
-    
+
     next();
   };
 };
 
-module.exports = { authenticate, authorize }; 
+module.exports = { auth, authorize }; 

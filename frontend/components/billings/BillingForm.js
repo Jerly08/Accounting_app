@@ -34,8 +34,18 @@ import {
   InputRightElement,
   IconButton,
   Image,
+  Switch,
+  Divider,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  Badge,
+  Tooltip,
 } from '@chakra-ui/react';
-import { FiUpload, FiFile, FiX, FiCheck, FiDownload } from 'react-icons/fi';
+import { FiUpload, FiFile, FiX, FiCheck, FiDownload, FiInfo } from 'react-icons/fi';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 
@@ -54,8 +64,8 @@ const BillingForm = ({
     percentage: '',
     amount: '',
     description: '',
-    status: 'unpaid',
     dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 14 days from now
+    createJournalEntry: true,
   };
 
   const [formData, setFormData] = useState(initialFormData);
@@ -67,9 +77,28 @@ const BillingForm = ({
   const [currentInvoice, setCurrentInvoice] = useState(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [projectTotalValue, setProjectTotalValue] = useState(0);
+  const [chartOfAccounts, setChartOfAccounts] = useState([]);
   const fileInputRef = useRef(null);
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+
+  // Status badge colors
+  const statusColors = {
+    pending: 'yellow',
+    approved: 'blue',
+    unpaid: 'orange',
+    paid: 'green',
+    rejected: 'red'
+  };
+
+  // Status descriptions
+  const statusDescriptions = {
+    pending: 'Menunggu persetujuan',
+    approved: 'Disetujui, siap untuk penagihan',
+    unpaid: 'Faktur diterbitkan, menunggu pembayaran',
+    paid: 'Pembayaran telah diterima',
+    rejected: 'Penagihan ditolak'
+  };
 
   // Check authentication status
   useEffect(() => {
@@ -94,8 +123,8 @@ const BillingForm = ({
         percentage: billing.percentage ? billing.percentage.toString() : '',
         amount: billing.amount ? billing.amount.toString() : '',
         description: billing.description || '',
-        status: billing.status || 'unpaid',
         dueDate: billing.dueDate ? new Date(billing.dueDate).toISOString().split('T')[0] : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        createJournalEntry: billing.createJournalEntry !== undefined ? billing.createJournalEntry : true,
       });
       
       if (billing.invoice) {
@@ -155,36 +184,63 @@ const BillingForm = ({
     fetchProjectDetails();
   }, [formData.projectId, token, isAuthenticated, percentageMode, formData.percentage]);
 
+  // Fetch chart of accounts
+  useEffect(() => {
+    const fetchChartOfAccounts = async () => {
+      if (!token || !isAuthenticated) return;
+      
+      try {
+        const response = await axios.get(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/chartofaccounts`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        
+        if (response.data.success && response.data.data) {
+          setChartOfAccounts(response.data.data);
+        }
+      } catch (error) {
+        console.error('Error fetching chart of accounts:', error);
+        // Don't show error toast, just use default account names
+        // Set default chart of accounts for the preview
+        setChartOfAccounts([
+          { code: '1102', name: 'Bank BCA', type: 'Aktiva' },
+          { code: '1201', name: 'Piutang Usaha', type: 'Aktiva' },
+          { code: '4001', name: 'Pendapatan Jasa Boring', type: 'Pendapatan' }
+        ]);
+      }
+    };
+    
+    fetchChartOfAccounts();
+  }, [token, isAuthenticated]);
+
   // Form validation
   const validateForm = () => {
     const newErrors = {};
     
     if (!formData.projectId) {
-      newErrors.projectId = 'Project is required';
+      newErrors.projectId = 'Proyek wajib dipilih';
     }
     
     if (!formData.billingDate) {
-      newErrors.billingDate = 'Billing date is required';
+      newErrors.billingDate = 'Tanggal penagihan wajib diisi';
     }
     
     if (percentageMode) {
       if (!formData.percentage) {
-        newErrors.percentage = 'Percentage is required';
-      } else if (isNaN(parseFloat(formData.percentage)) || parseFloat(formData.percentage) <= 0 || parseFloat(formData.percentage) > 100) {
-        newErrors.percentage = 'Percentage must be between 0 and 100';
+        newErrors.percentage = 'Persentase wajib diisi';
+      } else if (isNaN(formData.percentage) || parseFloat(formData.percentage) <= 0 || parseFloat(formData.percentage) > 100) {
+        newErrors.percentage = 'Persentase harus antara 0 dan 100';
       }
-    }
-    
-    if (!formData.amount) {
-      newErrors.amount = 'Amount is required';
-    } else if (isNaN(parseFloat(formData.amount)) || parseFloat(formData.amount) <= 0) {
-      newErrors.amount = 'Amount must be a positive number';
-    }
-    
-    if (!formData.status) {
-      newErrors.status = 'Status is required';
-    } else if (!['unpaid', 'partially_paid', 'paid'].includes(formData.status)) {
-      newErrors.status = 'Status must be unpaid, partially_paid, or paid';
+    } else {
+      if (!formData.amount) {
+        newErrors.amount = 'Jumlah wajib diisi';
+      } else if (isNaN(formData.amount) || parseFloat(formData.amount) <= 0) {
+        newErrors.amount = 'Jumlah harus lebih besar dari 0';
+      }
     }
     
     setErrors(newErrors);
@@ -333,14 +389,22 @@ const BillingForm = ({
     setFilePreview('');
   };
 
+  // Handle toggle change
+  const handleToggleChange = (e) => {
+    setFormData({
+      ...formData,
+      createJournalEntry: e.target.checked,
+    });
+  };
+
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!validateForm()) {
       toast({
-        title: 'Validation Error',
-        description: 'Please check the form for errors',
+        title: 'Form tidak valid',
+        description: 'Mohon periksa kembali data yang dimasukkan',
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -352,17 +416,28 @@ const BillingForm = ({
     
     try {
       // Create form data for file upload
-      const formDataObj = new FormData();
-      formDataObj.append('projectId', formData.projectId);
-      formDataObj.append('billingDate', formData.billingDate);
-      formDataObj.append('percentage', formData.percentage || '');
-      formDataObj.append('amount', formData.amount);
-      formDataObj.append('description', formData.description || '');
-      formDataObj.append('status', formData.status);
-      formDataObj.append('dueDate', formData.dueDate || '');
+      const formDataToSend = new FormData();
+      formDataToSend.append('projectId', formData.projectId);
+      formDataToSend.append('billingDate', formData.billingDate);
+      
+      if (percentageMode) {
+        formDataToSend.append('percentage', formData.percentage);
+      } else {
+        formDataToSend.append('amount', formData.amount);
+      }
+      
+      if (formData.description) {
+        formDataToSend.append('description', formData.description);
+      }
+      
+      if (formData.dueDate) {
+        formDataToSend.append('dueDate', formData.dueDate);
+      }
+      
+      formDataToSend.append('createJournalEntry', formData.createJournalEntry);
       
       if (selectedFile) {
-        formDataObj.append('invoice', selectedFile);
+        formDataToSend.append('invoice', selectedFile);
       }
       
       let response;
@@ -371,7 +446,7 @@ const BillingForm = ({
         // Update existing billing
         response = await axios.put(
           `${process.env.NEXT_PUBLIC_API_URL}/api/billings/${billing.id}`,
-          formDataObj,
+          formDataToSend,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -383,7 +458,7 @@ const BillingForm = ({
         // Create new billing
         response = await axios.post(
           `${process.env.NEXT_PUBLIC_API_URL}/api/billings`,
-          formDataObj,
+          formDataToSend,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -394,16 +469,13 @@ const BillingForm = ({
       }
       
       if (response.data.success) {
-        // Only show success toast when creating a new billing, not when updating
-        if (!billing) {
-          toast({
-            title: 'Success',
-            description: 'Billing created successfully',
-            status: 'success',
-            duration: 3000,
-            isClosable: true,
-          });
-        }
+        toast({
+          title: billing ? 'Penagihan berhasil diperbarui' : 'Penagihan berhasil ditambahkan',
+          description: response.data.message,
+          status: 'success',
+          duration: 3000,
+          isClosable: true,
+        });
         
         if (onSubmitSuccess) {
           onSubmitSuccess(response.data.data);
@@ -411,40 +483,15 @@ const BillingForm = ({
         
         onClose();
       } else {
-        throw new Error(response.data.message || 'Failed to save billing');
+        throw new Error(response.data.message || 'Terjadi kesalahan');
       }
     } catch (error) {
-      console.error('Error saving billing:', error);
-      
-      let errorMessage = 'Failed to save billing';
-      
-      if (error.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
-        } else if (error.response.status === 413) {
-          errorMessage = 'The invoice file is too large. Please use a smaller file.';
-        } else if (error.response.status === 401) {
-          errorMessage = 'Your session has expired. Please login again.';
-        } else if (error.response.status === 403) {
-          errorMessage = 'You do not have permission to perform this action.';
-        } else if (error.response.status >= 500) {
-          errorMessage = 'Server error. Please try again later.';
-        }
-      } else if (error.request) {
-        // The request was made but no response was received
-        errorMessage = 'No response from server. Please check your connection.';
-      } else {
-        // Something happened in setting up the request that triggered an Error
-        errorMessage = error.message;
-      }
-      
+      console.error('Error submitting billing:', error);
       toast({
         title: 'Error',
-        description: errorMessage,
+        description: error.response?.data?.message || error.message || 'Terjadi kesalahan',
         status: 'error',
-        duration: 5000,
+        duration: 3000,
         isClosable: true,
       });
     } finally {
@@ -519,247 +566,356 @@ const BillingForm = ({
     }).format(amount);
   };
 
+  // Get account name by code
+  const getAccountName = (code) => {
+    const account = chartOfAccounts.find(account => account.code === code);
+    return account ? account.name : code;
+  };
+
+  // Render journal entry preview
+  const renderJournalPreview = () => {
+    if (!formData.createJournalEntry || !formData.amount || !formData.projectId) {
+      return null;
+    }
+
+    const amount = parseFloat(formData.amount);
+    const isNewBilling = !billing || !billing.id;
+    const isStatusChange = billing && billing.status !== formData.status;
+    const isChangingToPaid = isStatusChange && formData.status === 'paid';
+
+    return (
+      <Box mt={4} p={3} borderWidth="1px" borderRadius="md" bg="gray.50">
+        <Text fontWeight="bold" mb={2}>Journal Entry Preview</Text>
+        
+        {isNewBilling && (
+          <>
+            <Text fontSize="sm" mb={2}>When creating this billing, the following journal entries will be created:</Text>
+            <Table size="sm" variant="simple" mb={3}>
+              <Thead>
+                <Tr>
+                  <Th>Account</Th>
+                  <Th>Description</Th>
+                  <Th isNumeric>Debit</Th>
+                  <Th isNumeric>Credit</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                <Tr>
+                  <Td>
+                    <Text fontWeight="medium">1201 - {getAccountName('1201')}</Text>
+                    <Badge colorScheme="blue" size="sm">Asset</Badge>
+                  </Td>
+                  <Td fontSize="sm">Invoice for project</Td>
+                  <Td isNumeric>{formatCurrency(amount)}</Td>
+                  <Td isNumeric>-</Td>
+                </Tr>
+                <Tr>
+                  <Td>
+                    <Text fontWeight="medium">4001 - {getAccountName('4001')}</Text>
+                    <Badge colorScheme="green" size="sm">Revenue</Badge>
+                  </Td>
+                  <Td fontSize="sm">Invoice for project</Td>
+                  <Td isNumeric>-</Td>
+                  <Td isNumeric>{formatCurrency(amount)}</Td>
+                </Tr>
+              </Tbody>
+            </Table>
+          </>
+        )}
+
+        {isChangingToPaid && (
+          <>
+            <Text fontSize="sm" mb={2}>When marking this billing as paid, the following journal entries will be created:</Text>
+            <Table size="sm" variant="simple">
+              <Thead>
+                <Tr>
+                  <Th>Account</Th>
+                  <Th>Description</Th>
+                  <Th isNumeric>Debit</Th>
+                  <Th isNumeric>Credit</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                <Tr>
+                  <Td>
+                    <Text fontWeight="medium">1102 - {getAccountName('1102')}</Text>
+                    <Badge colorScheme="blue" size="sm">Asset</Badge>
+                  </Td>
+                  <Td fontSize="sm">Payment received</Td>
+                  <Td isNumeric>{formatCurrency(amount)}</Td>
+                  <Td isNumeric>-</Td>
+                </Tr>
+                <Tr>
+                  <Td>
+                    <Text fontWeight="medium">1201 - {getAccountName('1201')}</Text>
+                    <Badge colorScheme="blue" size="sm">Asset</Badge>
+                  </Td>
+                  <Td fontSize="sm">Payment received</Td>
+                  <Td isNumeric>-</Td>
+                  <Td isNumeric>{formatCurrency(amount)}</Td>
+                </Tr>
+              </Tbody>
+            </Table>
+          </>
+        )}
+
+        <Text fontSize="xs" mt={2} color="gray.500">
+          Note: These journal entries will automatically maintain the balance in your accounting system.
+        </Text>
+      </Box>
+    );
+  };
+
+  const renderStatusBadge = () => {
+    if (!billing || !billing.status) return null;
+    
+    return (
+      <Flex align="center" mb={4}>
+        <Text fontWeight="bold" mr={2}>Status:</Text>
+        <Tooltip label={statusDescriptions[billing.status]}>
+          <Badge colorScheme={statusColors[billing.status]} fontSize="0.9em" p={1} borderRadius="md">
+            {billing.status.toUpperCase()}
+          </Badge>
+        </Tooltip>
+        <Tooltip label="Status tidak dapat diubah langsung dari form ini. Gunakan tombol aksi di halaman daftar penagihan.">
+          <Box ml={2}>
+            <FiInfo />
+          </Box>
+        </Tooltip>
+      </Flex>
+    );
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader>{billing ? 'Edit Invoice' : 'Create New Invoice'}</ModalHeader>
+        <ModalHeader>{billing ? 'Edit Penagihan' : 'Tambah Penagihan'}</ModalHeader>
         <ModalCloseButton />
-        <form onSubmit={handleSubmit}>
-          <ModalBody>
-            <VStack spacing={4}>
-              <FormControl isInvalid={errors.projectId}>
-                <FormLabel>Project</FormLabel>
+        <ModalBody>
+          <form onSubmit={handleSubmit}>
+            <VStack spacing={4} align="stretch">
+              {/* Display status badge when editing */}
+              {billing && renderStatusBadge()}
+
+              {/* Project selection */}
+              <FormControl isRequired isInvalid={errors.projectId}>
+                <FormLabel>Proyek</FormLabel>
                 <Select
                   name="projectId"
                   value={formData.projectId}
                   onChange={handleChange}
-                  placeholder="Select project"
-                  isDisabled={!!billing} // Disable if editing existing billing
-                  isRequired
+                  placeholder="Pilih proyek"
+                  isDisabled={!!billing} // Disable if editing
                 >
                   {projects.map((project) => (
-                    <option key={project.id} value={project.id.toString()}>
-                      {project.name} ({formatCurrency(project.totalValue)})
+                    <option key={project.id} value={project.id}>
+                      {project.projectCode} - {project.name}
                     </option>
                   ))}
                 </Select>
-                {projectTotalValue > 0 && (
-                  <FormHelperText>
-                    Project Total Value: {formatCurrency(projectTotalValue)}
-                  </FormHelperText>
-                )}
-                <FormErrorMessage>{errors.projectId}</FormErrorMessage>
+                {errors.projectId && <FormErrorMessage>{errors.projectId}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.billingDate}>
-                <FormLabel>Billing Date</FormLabel>
+              {/* Billing date */}
+              <FormControl isRequired isInvalid={errors.billingDate}>
+                <FormLabel>Tanggal Penagihan</FormLabel>
                 <Input
-                  name="billingDate"
                   type="date"
+                  name="billingDate"
                   value={formData.billingDate}
                   onChange={handleChange}
-                  isRequired
+                  isDisabled={billing && billing.status !== 'pending'}
                 />
-                <FormErrorMessage>{errors.billingDate}</FormErrorMessage>
+                {errors.billingDate && <FormErrorMessage>{errors.billingDate}</FormErrorMessage>}
               </FormControl>
 
-              <FormControl isInvalid={errors.dueDate}>
-                <FormLabel>Due Date</FormLabel>
+              {/* Due date */}
+              <FormControl>
+                <FormLabel>Tanggal Jatuh Tempo</FormLabel>
                 <Input
-                  name="dueDate"
                   type="date"
+                  name="dueDate"
                   value={formData.dueDate}
                   onChange={handleChange}
-                  isRequired
+                  isDisabled={billing && billing.status !== 'pending'}
                 />
-                <FormErrorMessage>{errors.dueDate}</FormErrorMessage>
               </FormControl>
 
-              <Flex width="100%" justifyContent="space-between" alignItems="center">
-                <Text>Calculate by:</Text>
-                <Button 
-                  size="sm" 
-                  onClick={togglePercentageMode}
-                  colorScheme={percentageMode ? "blue" : "gray"}
-                  variant={percentageMode ? "solid" : "outline"}
-                  mr={2}
-                >
-                  Percentage
-                </Button>
-                <Button 
-                  size="sm" 
-                  onClick={togglePercentageMode}
-                  colorScheme={!percentageMode ? "blue" : "gray"}
-                  variant={!percentageMode ? "solid" : "outline"}
-                >
-                  Amount
-                </Button>
-              </Flex>
+              {/* Percentage/Amount toggle */}
+              <FormControl>
+                <FormLabel>Mode Input</FormLabel>
+                <Flex>
+                  <Button
+                    size="sm"
+                    colorScheme={percentageMode ? 'blue' : 'gray'}
+                    onClick={() => setPercentageMode(true)}
+                    mr={2}
+                    isDisabled={billing && billing.status !== 'pending'}
+                  >
+                    Persentase
+                  </Button>
+                  <Button
+                    size="sm"
+                    colorScheme={!percentageMode ? 'blue' : 'gray'}
+                    onClick={() => setPercentageMode(false)}
+                    isDisabled={billing && billing.status !== 'pending'}
+                  >
+                    Jumlah
+                  </Button>
+                </Flex>
+              </FormControl>
 
+              {/* Percentage input */}
               {percentageMode && (
-                <FormControl isInvalid={errors.percentage}>
-                  <FormLabel>Percentage of Project Value</FormLabel>
-                  <HStack spacing={4}>
-                    <NumberInput
-                      min={1}
-                      max={100}
-                      step={1}
-                      value={formData.percentage}
-                      onChange={(value) => handleNumberChange('percentage', value)}
-                      flex="1"
-                    >
-                      <NumberInputField placeholder="Enter percentage" />
-                      <NumberInputStepper>
-                        <NumberIncrementStepper />
-                        <NumberDecrementStepper />
-                      </NumberInputStepper>
-                    </NumberInput>
-                    <Text>%</Text>
-                  </HStack>
-                  <Slider
+                <FormControl isRequired isInvalid={errors.percentage}>
+                  <FormLabel>Persentase</FormLabel>
+                  <NumberInput
+                    value={formData.percentage}
+                    onChange={(value) => handleNumberChange('percentage', value)}
                     min={0}
                     max={100}
-                    step={1}
-                    value={parseFloat(formData.percentage) || 0}
-                    onChange={(value) => handleNumberChange('percentage', value)}
-                    mt={2}
+                    precision={2}
+                    isDisabled={billing && billing.status !== 'pending'}
                   >
-                    <SliderTrack>
-                      <SliderFilledTrack />
-                    </SliderTrack>
-                    <SliderThumb />
-                  </Slider>
-                  <FormErrorMessage>{errors.percentage}</FormErrorMessage>
+                    <NumberInputField />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {errors.percentage && <FormErrorMessage>{errors.percentage}</FormErrorMessage>}
+                  {projectTotalValue > 0 && formData.percentage && (
+                    <FormHelperText>
+                      Jumlah: {formatCurrency((parseFloat(formData.percentage) / 100) * projectTotalValue)}
+                    </FormHelperText>
+                  )}
                 </FormControl>
               )}
 
-              <FormControl isInvalid={errors.amount}>
-                <FormLabel>Amount</FormLabel>
-                <NumberInput
-                  min={1}
-                  precision={0}
-                  step={1000}
-                  value={formData.amount}
-                  onChange={(value) => handleNumberChange('amount', value)}
-                  isDisabled={percentageMode}
-                  isRequired
-                >
-                  <NumberInputField placeholder="Enter amount" />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-                <FormHelperText>
-                  {formatCurrency(formData.amount)}
-                </FormHelperText>
-                <FormErrorMessage>{errors.amount}</FormErrorMessage>
-              </FormControl>
+              {/* Amount input */}
+              {!percentageMode && (
+                <FormControl isRequired isInvalid={errors.amount}>
+                  <FormLabel>Jumlah</FormLabel>
+                  <NumberInput
+                    value={formData.amount}
+                    onChange={(value) => handleNumberChange('amount', value)}
+                    min={0}
+                    precision={0}
+                    isDisabled={billing && billing.status !== 'pending'}
+                  >
+                    <NumberInputField />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {errors.amount && <FormErrorMessage>{errors.amount}</FormErrorMessage>}
+                  {projectTotalValue > 0 && formData.amount && (
+                    <FormHelperText>
+                      Persentase: {((parseFloat(formData.amount) / projectTotalValue) * 100).toFixed(2)}%
+                    </FormHelperText>
+                  )}
+                </FormControl>
+              )}
 
+              {/* Description */}
               <FormControl>
-                <FormLabel>Description</FormLabel>
+                <FormLabel>Keterangan</FormLabel>
                 <Textarea
                   name="description"
                   value={formData.description}
                   onChange={handleChange}
-                  placeholder="Enter billing description or notes"
-                  rows={3}
+                  placeholder="Masukkan keterangan penagihan"
+                  isDisabled={billing && billing.status !== 'pending'}
                 />
               </FormControl>
 
-              <FormControl isInvalid={errors.status}>
-                <FormLabel>Status</FormLabel>
-                <Select
-                  name="status"
-                  value={formData.status}
-                  onChange={handleChange}
-                  isRequired
-                >
-                  <option value="unpaid">Unpaid</option>
-                  <option value="partially_paid">Partially Paid</option>
-                  <option value="paid">Paid</option>
-                </Select>
-                <FormErrorMessage>{errors.status}</FormErrorMessage>
-              </FormControl>
-
+              {/* Invoice upload */}
               <FormControl>
-                <FormLabel>Invoice Document</FormLabel>
-                {renderFilePreview()}
-                
-                {selectedFile && (
-                  <Box mt={2} p={2} borderWidth="1px" borderRadius="md">
-                    <HStack justifyContent="space-between">
-                      <HStack>
-                        {selectedFile.type.startsWith('image/') ? (
-                          <Image
-                            src={filePreview}
-                            alt="File preview"
-                            boxSize="40px"
-                            objectFit="cover"
-                            borderRadius="md"
-                          />
-                        ) : (
-                          <FiFile size={24} />
-                        )}
-                        <VStack align="start" spacing={0}>
-                          <Text>{selectedFile.name}</Text>
-                          <Text fontSize="xs" color="gray.500">{(selectedFile.size / 1024).toFixed(2)} KB</Text>
-                        </VStack>
-                      </HStack>
-                      <IconButton
-                        icon={<FiX />}
-                        size="sm"
-                        aria-label="Remove file"
-                        onClick={clearSelectedFile}
-                      />
-                    </HStack>
-                  </Box>
-                )}
-                
-                {!selectedFile && !currentInvoice && (
-                  <Button 
-                    leftIcon={<FiUpload />} 
-                    onClick={() => fileInputRef.current.click()}
-                    variant="outline"
-                    width="100%"
-                    isDisabled={isUploadingFile}
-                  >
-                    Upload Invoice
-                  </Button>
-                )}
-                
-                <Input
-                  id="file-input"
+                <FormLabel>Upload Invoice</FormLabel>
+                <input
                   type="file"
-                  accept="image/jpeg,image/png,image/gif,application/pdf"
-                  onChange={handleFileChange}
                   ref={fileInputRef}
-                  display="none"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                  accept="image/jpeg,image/png,application/pdf"
+                  disabled={billing && billing.status !== 'pending'}
                 />
-                
-                <FormHelperText>
-                  Upload invoice document (max 5MB, image or PDF)
-                </FormHelperText>
+                <Flex>
+                  <Button
+                    leftIcon={<FiUpload />}
+                    onClick={() => fileInputRef.current.click()}
+                    isLoading={isUploadingFile}
+                    isDisabled={(billing && billing.status !== 'pending') || isUploadingFile}
+                  >
+                    Pilih File
+                  </Button>
+                  {(selectedFile || currentInvoice) && (
+                    <Button
+                      ml={2}
+                      colorScheme="red"
+                      variant="outline"
+                      leftIcon={<FiX />}
+                      onClick={selectedFile ? clearSelectedFile : clearCurrentInvoice}
+                      isDisabled={billing && billing.status !== 'pending'}
+                    >
+                      Hapus
+                    </Button>
+                  )}
+                </Flex>
+                {renderFilePreview()}
               </FormControl>
-            </VStack>
-          </ModalBody>
 
-          <ModalFooter>
-            <Button mr={3} onClick={onClose} variant="ghost" isDisabled={isSubmitting || isUploadingFile}>
-              Cancel
-            </Button>
-            <Button 
-              colorScheme="teal" 
-              type="submit" 
-              isLoading={isSubmitting || isUploadingFile}
-              loadingText={isUploadingFile ? "Uploading" : "Saving"}
-              isDisabled={isUploadingFile}
-            >
-              {billing ? 'Update' : 'Create'}
-            </Button>
-          </ModalFooter>
-        </form>
+              {/* Journal Entry Toggle */}
+              <FormControl display="flex" alignItems="center" mt={4}>
+                <FormLabel htmlFor="create-journal" mb="0">
+                  Buat Jurnal Akuntansi
+                </FormLabel>
+                <Switch
+                  id="create-journal"
+                  isChecked={formData.createJournalEntry}
+                  onChange={handleToggleChange}
+                  colorScheme="blue"
+                  isDisabled={billing && billing.status !== 'pending'}
+                />
+              </FormControl>
+
+              {/* Journal Entry Preview */}
+              {formData.createJournalEntry && formData.amount && (
+                <Box mt={4}>
+                  <Divider my={2} />
+                  <Text fontWeight="bold" mb={2}>
+                    Preview Jurnal Akuntansi
+                    <Tooltip label="Jurnal akan dibuat saat status berubah menjadi 'unpaid' atau 'paid'">
+                      <IconButton
+                        icon={<FiInfo />}
+                        size="xs"
+                        ml={2}
+                        aria-label="Info about journal entries"
+                        variant="ghost"
+                      />
+                    </Tooltip>
+                  </Text>
+                  {renderJournalPreview()}
+                </Box>
+              )}
+            </VStack>
+          </form>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="ghost" mr={3} onClick={onClose}>
+            Batal
+          </Button>
+          <Button 
+            colorScheme="blue" 
+            onClick={handleSubmit} 
+            isLoading={isSubmitting}
+            isDisabled={billing && billing.status !== 'pending'}
+          >
+            {billing ? 'Perbarui' : 'Simpan'}
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );

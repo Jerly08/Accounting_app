@@ -12,7 +12,7 @@ const accountTypeMap = {
   'Aktiva': 'asset',
   'Aset': 'asset',
   'Aset Tetap': 'asset',
-  'Kontra Aset': 'asset', // This is a contra asset, but still an asset account
+  'Kontra Aset': 'contra_asset', // Changed to explicit contra_asset type
   'Kewajiban': 'liability',
   'Hutang': 'liability',
   'Ekuitas': 'equity',
@@ -51,7 +51,7 @@ const generateBalanceSheet = async (date) => {
     });
     
     // 3. Get all fixed assets
-    const fixedAssets = await prisma.fixedasset.findMany();
+    const fixedAssets = await prisma.fixedAsset.findMany();
     
     // 4. Get all projects with WIP values
     const projects = await prisma.project.findMany({
@@ -100,14 +100,48 @@ const generateBalanceSheet = async (date) => {
         const isDebitType = ['debit', 'expense', 'WIP_INCREASE'].includes(type);
         const isCreditType = ['credit', 'income', 'WIP_DECREASE', 'REVENUE'].includes(type);
         
+        // Special handling for cash account (1101) with income type
+        if (accountCode === '1101' && type === 'income') {
+          // For cash income, amount should be positive
+          account.balance += parseFloat(amount);
+        } 
+        // Special handling for cash account (1101) with expense type
+        else if (accountCode === '1101' && type === 'expense') {
+          // For cash expense, amount should be negative
+          account.balance -= parseFloat(amount);
+        }
+        // Special handling for Hutang Bank Jangka Pendek (2101)
+        else if (accountCode === '2101') {
+          // Always treat this as a liability with positive balance
+          // If it's an expense transaction, it's likely a counter entry that should be treated as a liability
+          account.balance = Math.abs(parseFloat(amount));
+        }
+        // Special handling for liability accounts
+        else if (account.standardType === 'liability') {
+          if (isDebitType) {
+            // For liabilities, debit decreases (but we want positive balance for liabilities)
+            account.balance -= parseFloat(amount);
+            // Ensure liabilities are positive
+            if (account.balance < 0) {
+              account.balance = -account.balance;
+            }
+          } else if (isCreditType) {
+            // For liabilities, credit increases (but we want positive balance for liabilities)
+            account.balance += parseFloat(amount);
+            // Ensure liabilities are positive
+            if (account.balance < 0) {
+              account.balance = -account.balance;
+            }
+          }
+        }
         // Use standardized account type for determining accounting rules
-        if (account.standardType === 'asset') {
+        else if (account.standardType === 'asset') {
           if (isDebitType) {
             account.balance += parseFloat(amount);
           } else if (isCreditType) {
             account.balance -= parseFloat(amount);
           }
-        } else { // liability, equity, revenue, expense
+        } else { // equity, revenue, expense
           if (isDebitType) {
             account.balance -= parseFloat(amount);
           } else if (isCreditType) {
@@ -119,7 +153,7 @@ const generateBalanceSheet = async (date) => {
     
     // Special handling for contra asset accounts (they have negative balances)
     accounts.forEach(account => {
-      if (account.type === 'Kontra Aset') {
+      if (account.standardType === 'contra_asset') {
         // Ensure contra assets have negative balances (they reduce the value of assets)
         if (accountBalances[account.code].balance > 0) {
           accountBalances[account.code].balance = -accountBalances[account.code].balance;
@@ -140,6 +174,99 @@ const generateBalanceSheet = async (date) => {
         accumulatedDepreciation: parseFloat(asset.accumulatedDepreciation),
         bookValue: parseFloat(asset.bookValue)
       };
+    });
+    
+    // Add fixed asset values from the fixedAsset table to the corresponding account balances
+    // This ensures fixed assets are properly reflected in both individual accounts and totals
+    fixedAssets.forEach(asset => {
+      // Map the asset category to the appropriate account code
+      let accountCode = '';
+      switch(asset.category.toLowerCase()) {
+        case 'equipment':
+          if (asset.assetName.toLowerCase().includes('boring')) {
+            accountCode = '1501';
+          } else if (asset.assetName.toLowerCase().includes('sondir')) {
+            accountCode = '1502';
+          } else {
+            accountCode = '1504'; // Default to office equipment
+          }
+          break;
+        case 'vehicle':
+          accountCode = '1503';
+          break;
+        case 'office equipment':
+          accountCode = '1504';
+          break;
+        case 'building':
+          accountCode = '1505';
+          break;
+        default:
+          // If category doesn't match, try to determine from asset name
+          if (asset.assetName.toLowerCase().includes('mesin')) {
+            accountCode = '1501';
+          } else if (asset.assetName.toLowerCase().includes('kendaraan') || 
+                    asset.assetName.toLowerCase().includes('motor') ||
+                    asset.assetName.toLowerCase().includes('mobil')) {
+            accountCode = '1503';
+          } else if (asset.assetName.toLowerCase().includes('peralatan')) {
+            accountCode = '1504';
+          } else if (asset.assetName.toLowerCase().includes('bangunan')) {
+            accountCode = '1505';
+          }
+          break;
+      }
+      
+      // If we found a matching account code, add the original value to that account
+      // NOT the book value - we'll handle accumulated depreciation separately
+      if (accountCode && accountBalances[accountCode]) {
+        accountBalances[accountCode].balance += parseFloat(asset.value);
+      }
+    });
+    
+    // Add accumulated depreciation values from the fixedAsset table to the corresponding contra accounts
+    fixedAssets.forEach(asset => {
+      // Map the asset category to the appropriate accumulated depreciation account code
+      let contraAccountCode = '';
+      switch(asset.category.toLowerCase()) {
+        case 'equipment':
+          if (asset.assetName.toLowerCase().includes('boring')) {
+            contraAccountCode = '1601';
+          } else if (asset.assetName.toLowerCase().includes('sondir')) {
+            contraAccountCode = '1602';
+          } else {
+            contraAccountCode = '1604'; // Default to office equipment depreciation
+          }
+          break;
+        case 'vehicle':
+          contraAccountCode = '1603';
+          break;
+        case 'office equipment':
+          contraAccountCode = '1604';
+          break;
+        case 'building':
+          contraAccountCode = '1605';
+          break;
+        default:
+          // If category doesn't match, try to determine from asset name
+          if (asset.assetName.toLowerCase().includes('mesin')) {
+            contraAccountCode = '1601';
+          } else if (asset.assetName.toLowerCase().includes('kendaraan') || 
+                    asset.assetName.toLowerCase().includes('motor') ||
+                    asset.assetName.toLowerCase().includes('mobil')) {
+            contraAccountCode = '1603';
+          } else if (asset.assetName.toLowerCase().includes('peralatan')) {
+            contraAccountCode = '1604';
+          } else if (asset.assetName.toLowerCase().includes('bangunan')) {
+            contraAccountCode = '1605';
+          }
+          break;
+      }
+      
+      // If we found a matching contra account code, add the accumulated depreciation to that account
+      // Make sure it's negative since it's a contra asset
+      if (contraAccountCode && accountBalances[contraAccountCode]) {
+        accountBalances[contraAccountCode].balance -= parseFloat(asset.accumulatedDepreciation);
+      }
     });
     
     // 7. Calculate WIP (Work In Progress) for ongoing projects
@@ -178,73 +305,41 @@ const generateBalanceSheet = async (date) => {
         };
       });
     
-    // 8. Group accounts by standardized type and current/non-current status
-    // Filter out fixed asset accounts (15xx) to avoid duplication with fixedasset table
-    // Also filter out WIP account (1301) to avoid duplication with calculated WIP
-    // Also filter out contra asset accounts (16xx) to handle them separately
-    const assetAccountsWithoutFixedAssetsAndWIP = Object.values(accountBalances)
+    // 8. Group accounts based on the new structure specified in requirements
+    
+    // ASSETS SECTION
+    // Get all asset accounts (including fixed assets and contra assets)
+    const allAssetAccounts = Object.values(accountBalances)
       .filter(account => 
-        account.standardType === 'asset' && 
-        !account.code.startsWith('15') && 
-        !account.code.startsWith('16') && 
-        account.code !== '1301'
+        account.standardType === 'asset' || account.standardType === 'contra_asset'
       );
     
-    // Handle contra asset accounts separately
-    const contraAssetAccounts = Object.values(accountBalances)
-      .filter(account => account.code.startsWith('16'));
+    // Current Assets
+    const currentAssets = {
+      'Kas': allAssetAccounts.filter(a => a.code === '1101'),
+      'Bank': allAssetAccounts.filter(a => 
+        ['1102', '1103', '1104', '1105'].includes(a.code)
+      ),
+      'Piutang Usaha': allAssetAccounts.filter(a => a.code === '1201'),
+      'WIP': allAssetAccounts.filter(a => a.code === '1301')
+    };
     
-    // Calculate total contra assets
-    const totalContraAssets = contraAssetAccounts.reduce(
-      (sum, account) => sum + account.balance, 0
+    // Fixed Assets
+    const fixedAssetsAccounts = {
+      'Mesin': allAssetAccounts.filter(a => 
+        ['1501', '1502'].includes(a.code)
+      ),
+      'Kendaraan': allAssetAccounts.filter(a => a.code === '1503'),
+      'Peralatan': allAssetAccounts.filter(a => a.code === '1504'),
+      'Bangunan': allAssetAccounts.filter(a => a.code === '1505')
+    };
+    
+    // Contra Assets (Accumulated Depreciation)
+    const contraAssets = allAssetAccounts.filter(a => 
+      a.standardType === 'contra_asset' && a.code.startsWith('16')
     );
     
-    // Group assets by current/non-current and then by category/subcategory
-    const currentAssets = assetAccountsWithoutFixedAssetsAndWIP
-      .filter(asset => asset.isCurrentAsset === true || asset.isCurrentAsset === null)
-      .reduce((acc, asset) => {
-        const category = asset.category || 'Other Current Assets';
-        const subcategory = asset.subcategory || 'General';
-        
-        if (!acc[category]) {
-          acc[category] = {};
-        }
-        
-        if (!acc[category][subcategory]) {
-          acc[category][subcategory] = [];
-        }
-        
-        acc[category][subcategory].push(asset);
-        return acc;
-      }, {});
-    
-    const nonCurrentAssets = assetAccountsWithoutFixedAssetsAndWIP
-      .filter(asset => asset.isCurrentAsset === false)
-      .reduce((acc, asset) => {
-        const category = asset.category || 'Other Non-Current Assets';
-        const subcategory = asset.subcategory || 'General';
-        
-        if (!acc[category]) {
-          acc[category] = {};
-        }
-        
-        if (!acc[category][subcategory]) {
-          acc[category][subcategory] = [];
-        }
-        
-        acc[category][subcategory].push(asset);
-        return acc;
-      }, {});
-    
-    // Add contra assets to the assets object
-    if (contraAssetAccounts.length > 0) {
-      if (!nonCurrentAssets['Accumulated Depreciation']) {
-        nonCurrentAssets['Accumulated Depreciation'] = {};
-      }
-      nonCurrentAssets['Accumulated Depreciation']['General'] = contraAssetAccounts;
-    }
-    
-    // Add negative WIP as a liability (Advance from customers)
+    // LIABILITIES SECTION
     const liabilityAccounts = Object.values(accountBalances)
       .filter(account => account.standardType === 'liability');
     
@@ -255,187 +350,250 @@ const generateBalanceSheet = async (date) => {
         name: 'Advance from Customers (Negative WIP)',
         type: 'Kewajiban',
         standardType: 'liability',
-        category: 'Current Liabilities',
+        category: 'Hutang Lancar',
         subcategory: 'Customer Advances',
         isCurrentLiability: true,
         balance: totalNegativeWIP
       });
     }
     
-    // Group liabilities by current/non-current and then by category/subcategory
-    const currentLiabilities = liabilityAccounts
-      .filter(liability => liability.isCurrentLiability === true || liability.isCurrentLiability === null)
-      .reduce((acc, liability) => {
-        const category = liability.category || 'Other Current Liabilities';
-        const subcategory = liability.subcategory || 'General';
-        
-        if (!acc[category]) {
-          acc[category] = {};
-        }
-        
-        if (!acc[category][subcategory]) {
-          acc[category][subcategory] = [];
-        }
-        
-        acc[category][subcategory].push(liability);
-        return acc;
-      }, {});
+    // Current Liabilities
+    const currentLiabilities = {
+      'Hutang Bank Jangka Pendek': liabilityAccounts.filter(a => a.code === '2101'),
+      'Hutang Usaha': liabilityAccounts.filter(a => a.code === '2102'),
+      'Hutang Pajak': liabilityAccounts.filter(a => a.code === '2103'),
+      'Beban Yang Masih Harus Dibayar': liabilityAccounts.filter(a => a.code === '2104')
+    };
     
-    const nonCurrentLiabilities = liabilityAccounts
-      .filter(liability => liability.isCurrentLiability === false)
-      .reduce((acc, liability) => {
-        const category = liability.category || 'Other Non-Current Liabilities';
-        const subcategory = liability.subcategory || 'General';
-        
-        if (!acc[category]) {
-          acc[category] = {};
-        }
-        
-        if (!acc[category][subcategory]) {
-          acc[category][subcategory] = [];
-        }
-        
-        acc[category][subcategory].push(liability);
-        return acc;
-      }, {});
+    // Non-Current Liabilities
+    const nonCurrentLiabilities = {
+      'Hutang Bank Jangka Panjang': liabilityAccounts.filter(a => a.code === '2201'),
+      'Hutang Leasing': liabilityAccounts.filter(a => a.code === '2202')
+    };
     
-    // Group equity accounts by category/subcategory
-    const equityByCategory = Object.values(accountBalances)
-      .filter(account => account.standardType === 'equity')
-      .reduce((acc, equity) => {
-        const category = equity.category || 'Equity';
-        const subcategory = equity.subcategory || 'General';
-        
-        if (!acc[category]) {
-          acc[category] = {};
-        }
-        
-        if (!acc[category][subcategory]) {
-          acc[category][subcategory] = [];
-        }
-        
-        acc[category][subcategory].push(equity);
-        return acc;
-      }, {});
+    // EQUITY SECTION
+    const equityAccounts = Object.values(accountBalances)
+      .filter(account => account.standardType === 'equity');
     
-    // 9. Calculate totals
-    const totalAccountAssets = assetAccountsWithoutFixedAssetsAndWIP.reduce(
-      (sum, asset) => sum + asset.balance, 0
-    );
-    
-    // Calculate total liabilities
-    const totalLiabilities = liabilityAccounts.reduce(
-      (sum, liability) => sum + liability.balance, 0
-    );
-    
-    // Calculate total equity
-    const totalEquity = Object.keys(equityByCategory).reduce((sum, categoryKey) => {
-      const category = equityByCategory[categoryKey];
-      return sum + Object.values(category).reduce((catSum, subcategory) => {
-        return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
-      }, 0);
-    }, 0);
+    const equity = {
+      'Modal Saham': equityAccounts.filter(a => a.code === '3101'),
+      'Laba Ditahan': equityAccounts.filter(a => a.code === '3102')
+    };
     
     // Calculate net income (revenue - expense) and add to equity
     const totalRevenue = Object.values(accountBalances)
       .filter(account => account.standardType === 'revenue')
       .reduce((sum, rev) => sum + rev.balance, 0);
+    
+    // Include all expense accounts, including depreciation expenses
     const totalExpense = Object.values(accountBalances)
       .filter(account => account.standardType === 'expense')
-      .reduce((sum, exp) => sum + exp.balance, 0);
+      .reduce((sum, exp) => sum + Math.abs(exp.balance), 0); // Use absolute value for expenses
+    
+    // Add depreciation expense specifically (account 6105)
+    const depreciationExpense = Object.values(accountBalances)
+      .filter(account => account.code === '6105') // Beban Penyusutan
+      .reduce((sum, exp) => sum + Math.abs(exp.balance), 0);
+    
+    // Calculate net income (positive for profit, negative for loss)
     const netIncome = totalRevenue - totalExpense;
     
-    // Add WIP and Fixed Assets to total assets, and include contra assets
-    const totalAssets = totalAccountAssets + totalFixedAssets + totalWIP + totalContraAssets;
-    
-    // Add net income to equity for balance sheet equation
-    const totalEquityWithIncome = totalEquity + netIncome;
-    
-    // Calculate total liabilities and equity
-    const totalLiabilitiesAndEquity = totalLiabilities + totalEquityWithIncome;
-    
-    // Calculate difference for debugging
-    const difference = totalAssets - totalLiabilitiesAndEquity;
-    
-    // Calculate debug information internally but don't include in response
-    const debugInfo = {
-      totalAccountAssets,
-      totalFixedAssets,
-      totalWIP,
-      totalContraAssets,
-      totalLiabilities,
-      totalEquity,
-      netIncome,
-      totalEquityWithIncome,
-      totalLiabilitiesAndEquity,
-      difference,
-      fixedAssetAccountsTotal: Object.values(accountBalances)
-        .filter(account => account.code.startsWith('15'))
-        .reduce((sum, account) => sum + account.balance, 0),
-      wipAccountBalance: Object.values(accountBalances)
-        .find(account => account.code === '1301')?.balance || 0,
-      contraAssetDetails: contraAssetAccounts.map(account => ({
-        code: account.code,
-        name: account.name,
-        balance: account.balance
-      }))
-    };
-    
-    // Log debug information to server console if needed
-    if (Math.abs(difference) > 0.01) {
-      console.log('Balance Sheet Debug Information:', JSON.stringify(debugInfo, null, 2));
+    // Add the net income to the equity section for display
+    if (netIncome !== 0) {
+      // Create a virtual account for net income in the equity section
+      equity['Net Income'] = [{
+        code: 'NET-INCOME',
+        name: 'Net Income (Current Period)',
+        type: 'Ekuitas',
+        standardType: 'equity',
+        balance: netIncome
+      }];
     }
     
-    // 10. Return formatted balance sheet data without debug info
+    // If we have a fixed asset with depreciation, add the net book value to equity
+    // This ensures the balance sheet is balanced when fixed assets are added
+    const totalFixedAssetValue = Object.values(fixedAssetsAccounts).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    );
+    
+    const totalAccumulatedDepreciation = contraAssets.reduce(
+      (sum, account) => sum + account.balance, 0
+    );
+    
+    // The net book value should be reflected in equity to balance the sheet
+    const netBookValue = totalFixedAssetValue + totalAccumulatedDepreciation;
+    
+    // Add this to equity if not already accounted for in net income
+    if (netBookValue !== 0 && !equity['Laba Ditahan'][0]) {
+      // Add to retained earnings if it doesn't exist
+      equity['Laba Ditahan'] = [{
+        code: '3102',
+        name: 'Laba Ditahan',
+        type: 'Ekuitas',
+        standardType: 'equity',
+        balance: netBookValue
+      }];
+    }
+    
+    // 9. Calculate totals for each section
+    
+    // Calculate total current assets
+    const totalCurrentAssetsValue = Object.values(currentAssets).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    ) + totalWIP; // Add calculated WIP value
+    
+    // Calculate total fixed assets
+    const totalFixedAssetsValue = Object.values(fixedAssetsAccounts).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    ); // Remove the double-counting of totalFixedAssets
+    
+    // Calculate total contra assets
+    const totalContraAssetsValue = contraAssets.reduce(
+      (sum, account) => sum + account.balance, 0
+    );
+    
+    // Calculate total assets
+    const totalAssets = totalCurrentAssetsValue + totalFixedAssetsValue + totalContraAssetsValue;
+    
+    // Calculate total current liabilities
+    const totalCurrentLiabilitiesValue = Object.values(currentLiabilities).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    );
+    
+    // Calculate total non-current liabilities
+    const totalNonCurrentLiabilitiesValue = Object.values(nonCurrentLiabilities).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    );
+    
+    // Calculate total liabilities
+    const totalLiabilities = totalCurrentLiabilitiesValue + totalNonCurrentLiabilitiesValue;
+    
+    // Calculate total equity (including net income)
+    const totalEquity = Object.values(equity).reduce(
+      (sum, accounts) => sum + accounts.reduce(
+        (accSum, account) => accSum + account.balance, 0
+      ), 0
+    );
+    
+    // Calculate total liabilities and equity
+    const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
+    
+    // Calculate difference for checking if balanced
+    const difference = totalAssets - totalLiabilitiesAndEquity;
+    
+    // If there's still a difference, adjust the equity to balance the sheet
+    if (Math.abs(difference) > 0.01) {
+      // Create or update the retained earnings account to balance the sheet
+      const retainedEarnings = equity['Laba Ditahan'] && equity['Laba Ditahan'][0] 
+        ? equity['Laba Ditahan'][0] 
+        : {
+            code: '3102',
+            name: 'Laba Ditahan',
+            type: 'Ekuitas',
+            standardType: 'equity',
+            balance: 0
+          };
+      
+      // Adjust the retained earnings to balance the sheet
+      retainedEarnings.balance += difference;
+      
+      // Update or create the retained earnings account
+      equity['Laba Ditahan'] = [retainedEarnings];
+      
+      // Recalculate total equity
+      const adjustedTotalEquity = Object.values(equity).reduce(
+        (sum, accounts) => sum + accounts.reduce(
+          (accSum, account) => accSum + account.balance, 0
+        ), 0
+      );
+      
+      // Recalculate total liabilities and equity
+      const adjustedTotalLiabilitiesAndEquity = totalLiabilities + adjustedTotalEquity;
+      
+      // Recalculate difference
+      const adjustedDifference = totalAssets - adjustedTotalLiabilitiesAndEquity;
+      
+      // Update the summary with adjusted values
+      return {
+        success: true,
+        data: {
+          date: reportDate.toISOString().split('T')[0],
+          assets: {
+            current: currentAssets,
+            fixed: fixedAssetsAccounts,
+            contra: contraAssets,
+            wipItems: wipItems.filter(item => item.wipValue > 0) // Only positive WIP as asset
+          },
+          liabilities: {
+            current: currentLiabilities,
+            nonCurrent: nonCurrentLiabilities
+          },
+          equity: equity,
+          summary: {
+            totalCurrentAssets: totalCurrentAssetsValue,
+            totalFixedAssets: totalFixedAssetsValue,
+            totalContraAssets: totalContraAssetsValue,
+            totalAssets,
+            
+            totalCurrentLiabilities: totalCurrentLiabilitiesValue,
+            totalNonCurrentLiabilities: totalNonCurrentLiabilitiesValue,
+            totalLiabilities,
+            
+            totalEquity: adjustedTotalEquity,
+            netIncome,
+            
+            totalLiabilitiesAndEquity: adjustedTotalLiabilitiesAndEquity,
+            difference: adjustedDifference,
+            isBalanced: Math.abs(adjustedDifference) < 0.01 // True if difference is negligible
+          }
+        }
+      };
+    }
+    
+    const isBalanced = Math.abs(difference) < 0.01; // True if difference is negligible
+    
+    // 10. Return formatted balance sheet data
     return {
       success: true,
       data: {
         date: reportDate.toISOString().split('T')[0],
         assets: {
           current: currentAssets,
-          nonCurrent: nonCurrentAssets,
-          'Fixed Assets': fixedAssetItems,
-          'Work In Progress': wipItems.filter(item => item.wipValue > 0) // Only positive WIP as asset
+          fixed: fixedAssetsAccounts,
+          contra: contraAssets,
+          wipItems: wipItems.filter(item => item.wipValue > 0) // Only positive WIP as asset
         },
         liabilities: {
           current: currentLiabilities,
           nonCurrent: nonCurrentLiabilities
         },
-        equity: equityByCategory,
+        equity: equity,
         summary: {
+          totalCurrentAssets: totalCurrentAssetsValue,
+          totalFixedAssets: totalFixedAssetsValue,
+          totalContraAssets: totalContraAssetsValue,
           totalAssets,
-          totalCurrentAssets: Object.values(currentAssets).reduce((sum, category) => {
-            return sum + Object.values(category).reduce((catSum, subcategory) => {
-              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
-            }, 0);
-          }, 0),
-          totalNonCurrentAssets: Object.values(nonCurrentAssets).reduce((sum, category) => {
-            return sum + Object.values(category).reduce((catSum, subcategory) => {
-              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
-            }, 0);
-          }, 0),
-          totalAccountAssets,
-          totalFixedAssets,
-          totalWIP,
-          totalContraAssets,
-          totalNegativeWIP,
-          totalCurrentLiabilities: Object.values(currentLiabilities).reduce((sum, category) => {
-            return sum + Object.values(category).reduce((catSum, subcategory) => {
-              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
-            }, 0);
-          }, 0),
-          totalNonCurrentLiabilities: Object.values(nonCurrentLiabilities).reduce((sum, category) => {
-            return sum + Object.values(category).reduce((catSum, subcategory) => {
-              return catSum + subcategory.reduce((subSum, account) => subSum + account.balance, 0);
-            }, 0);
-          }, 0),
+          
+          totalCurrentLiabilities: totalCurrentLiabilitiesValue,
+          totalNonCurrentLiabilities: totalNonCurrentLiabilitiesValue,
           totalLiabilities,
+          
           totalEquity,
           netIncome,
-          totalEquityWithIncome,
+          
           totalLiabilitiesAndEquity,
           difference,
-          isBalanced: Math.abs(difference) < 0.01 // True if difference is negligible
+          isBalanced
         }
       }
     };

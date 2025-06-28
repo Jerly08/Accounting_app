@@ -492,7 +492,7 @@ const ProjectForm = ({ isOpen, onClose, project, onSubmitSuccess }) => {
                   value={formData.status}
                   onChange={handleChange}
                 >
-                  <option value="ongoing">Active</option>
+                  <option value="ongoing">Ongoing</option>
                   <option value="planned">Planned</option>
                   <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>

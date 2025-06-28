@@ -1,19 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-const { authenticate, authorize } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
 const depreciationService = require('../services/depreciation');
+const doubleEntryService = require('../services/doubleEntryService');
+const logger = require('../utils/logger');
+const prismaUtil = require('../utils/prisma');
 
-const prisma = new PrismaClient();
+const prisma = prismaUtil.prisma;
 
 /**
  * @route   GET /api/assets
  * @desc    Get all fixed assets with optional filtering
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
-    const { search, category, limit, page } = req.query;
+    const { search, category, status, limit, page } = req.query;
     const pageNumber = parseInt(page) || 1;
     const pageSize = parseInt(limit) || 10;
     const skip = (pageNumber - 1) * pageSize;
@@ -22,22 +25,19 @@ router.get('/', authenticate, async (req, res) => {
     let where = {};
     if (search) {
       where = {
-        assetName: {
-          contains: search
-        }
-      };
-    }
-    
-    // Add category filter if provided
-    if (category) {
-      where = {
-        ...where,
-        category
+        OR: [
+          { assetName: { contains: search } },
+          { category: { contains: search } }
+        ]
       };
     }
 
+    if (category) {
+      where.category = category;
+    }
+
     // Get assets with pagination
-    const assets = await prisma.fixedasset.findMany({
+    const assets = await prisma.fixedAsset.findMany({
       where,
       skip,
       take: pageSize,
@@ -47,24 +47,33 @@ router.get('/', authenticate, async (req, res) => {
     });
 
     // Get total count for pagination
-    const total = await prisma.fixedasset.count({ where });
+    const total = await prisma.fixedAsset.count({ where });
 
-    // Get total value and depreciation
-    const totalValues = await prisma.fixedasset.aggregate({
+    // Get total value
+    const totalValue = await prisma.fixedAsset.aggregate({
+      where,
       _sum: {
-        value: true,
-        accumulatedDepreciation: true,
-        bookValue: true
+        value: true
       }
+    });
+
+    // Calculate current values and add to response
+    const assetsWithCurrentValue = assets.map(asset => {
+      const currentValue = asset.bookValue;
+      const depreciationToDate = parseFloat(asset.value.toString()) - parseFloat(asset.bookValue.toString());
+
+      return {
+        ...asset,
+        currentValue,
+        depreciationToDate
+      };
     });
 
     res.json({
       success: true,
-      data: assets,
+      data: assetsWithCurrentValue,
       summary: {
-        totalAssetValue: totalValues._sum.value || 0,
-        totalAccumulatedDepreciation: totalValues._sum.accumulatedDepreciation || 0,
-        totalBookValue: totalValues._sum.bookValue || 0
+        totalValue: totalValue._sum.value || 0
       },
       pagination: {
         page: pageNumber,
@@ -74,6 +83,7 @@ router.get('/', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching assets:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat mengambil data aset tetap',
@@ -84,48 +94,41 @@ router.get('/', authenticate, async (req, res) => {
 
 /**
  * @route   GET /api/assets/:id
- * @desc    Get single fixed asset by ID
+ * @desc    Get single asset by ID
  * @access  Private
  */
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const asset = await prisma.fixedasset.findUnique({
+    const asset = await prisma.fixedAsset.findUnique({
       where: { id: parseInt(id) }
     });
 
     if (!asset) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Aset tetap tidak ditemukan' 
+        message: 'Aset tidak ditemukan' 
       });
     }
 
-    // Calculate additional info
-    const currentDate = new Date();
-    const acquisitionDate = new Date(asset.acquisitionDate);
-    const ageInYears = (currentDate - acquisitionDate) / (1000 * 60 * 60 * 24 * 365);
-    const remainingYears = Math.max(0, asset.usefulLife - ageInYears);
-    
-    // Add to response
-    const assetWithDetails = {
+    // Calculate current value
+    const currentValue = asset.bookValue;
+    const depreciationToDate = parseFloat(asset.value.toString()) - parseFloat(asset.bookValue.toString());
+
+    const assetWithCurrentValue = {
       ...asset,
-      details: {
-        ageInYears: parseFloat(ageInYears.toFixed(2)),
-        remainingYears: parseFloat(remainingYears.toFixed(2)),
-        depreciationRate: (100 / asset.usefulLife).toFixed(2) + '%',
-        annualDepreciation: parseFloat((asset.value / asset.usefulLife).toFixed(2))
-      }
+      currentValue,
+      depreciationToDate
     };
 
     res.json({
       success: true,
-      data: assetWithDetails
+      data: assetWithCurrentValue
     });
   } catch (error) {
     res.status(500).json({ 
       success: false, 
-      message: 'Error saat mengambil data aset tetap',
+      message: 'Error saat mengambil data aset',
       error: error.message 
     });
   }
@@ -133,12 +136,12 @@ router.get('/:id', authenticate, async (req, res) => {
 
 /**
  * @route   POST /api/assets
- * @desc    Create new fixed asset
+ * @desc    Create new fixed asset with double-entry transactions
  * @access  Private
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
-    const { assetName, category, acquisitionDate, value, usefulLife } = req.body;
+    const { assetName, category, acquisitionDate, value, usefulLife, description, location, assetTag } = req.body;
     
     // Validate required fields
     if (!assetName || !acquisitionDate || !value || !usefulLife) {
@@ -185,26 +188,133 @@ router.post('/', authenticate, async (req, res) => {
     const accumulatedDepreciation = Math.min(assetValue, Math.max(0, depreciation));
     const bookValue = assetValue - accumulatedDepreciation;
 
-    // Create fixed asset
-    const asset = await prisma.fixedasset.create({
-      data: {
-        assetName,
-        category: category || "equipment", // Default to equipment if not provided
-        acquisitionDate: acquisitionDateObj,
-        value: assetValue,
-        usefulLife: assetUsefulLife,
-        accumulatedDepreciation,
-        bookValue,
-        updatedAt: new Date()
+    // Gunakan transaksi database untuk memastikan semua operasi berhasil atau gagal bersama-sama
+    const result = await prisma.$transaction(async (prisma) => {
+      // 1. Buat catatan aset tetap
+      const asset = await prisma.fixedAsset.create({
+        data: {
+          assetName,
+          category: category || "equipment", // Default to equipment if not provided
+          acquisitionDate: acquisitionDateObj,
+          value: assetValue,
+          usefulLife: assetUsefulLife,
+          accumulatedDepreciation,
+          bookValue,
+          updatedAt: new Date()
+        }
+      });
+
+      // 2. Tentukan kode akun aset tetap berdasarkan kategori
+      let fixedAssetAccountCode;
+      switch(category) {
+        case 'equipment':
+          fixedAssetAccountCode = '1501'; // Mesin Boring (sebagai contoh untuk equipment)
+          break;
+        case 'vehicle':
+          fixedAssetAccountCode = '1503'; // Kendaraan Operasional
+          break;
+        case 'building':
+          fixedAssetAccountCode = '1505'; // Bangunan Kantor
+          break;
+        case 'office':
+          fixedAssetAccountCode = '1504'; // Peralatan Kantor
+          break;
+        default:
+          fixedAssetAccountCode = '1501'; // Default ke Mesin Boring
       }
+
+      // 3. Buat transaksi debit ke akun aset tetap
+      const debitTransaction = await prisma.transaction.create({
+        data: {
+          date: acquisitionDateObj,
+          type: 'Aset Tetap',
+          accountCode: fixedAssetAccountCode,
+          description: `Pembelian aset tetap: ${assetName}`,
+          amount: assetValue,
+          notes: description || `Kategori: ${category}, Lokasi: ${location || 'N/A'}, Tag: ${assetTag || 'N/A'}`,
+          updatedAt: new Date()
+        }
+      });
+
+      // 4. Buat transaksi kredit ke akun kas/bank (default ke Bank BCA)
+      const creditTransaction = await prisma.transaction.create({
+        data: {
+          date: acquisitionDateObj,
+          type: 'Pengeluaran',
+          accountCode: '1102', // Bank BCA
+          description: `Pembayaran untuk aset tetap: ${assetName}`,
+          amount: -assetValue, // Nilai negatif untuk kredit
+          notes: `Referensi ke pembelian aset tetap ID: ${asset.id}`,
+          updatedAt: new Date()
+        }
+      });
+
+      // 5. Jika ada penyusutan, buat entri penyusutan
+      if (accumulatedDepreciation > 0) {
+        // Tentukan kode akun akumulasi penyusutan berdasarkan kategori
+        let accDepreciationAccountCode;
+        switch(category) {
+          case 'equipment':
+            accDepreciationAccountCode = '1601'; // Akumulasi Penyusutan Mesin Boring
+            break;
+          case 'vehicle':
+            accDepreciationAccountCode = '1603'; // Akumulasi Penyusutan Kendaraan
+            break;
+          case 'building':
+            accDepreciationAccountCode = '1605'; // Akumulasi Penyusutan Bangunan
+            break;
+          case 'office':
+            accDepreciationAccountCode = '1604'; // Akumulasi Penyusutan Peralatan Kantor
+            break;
+          default:
+            accDepreciationAccountCode = '1601'; // Default ke Akumulasi Penyusutan Mesin Boring
+        }
+
+        // Buat transaksi debit ke beban penyusutan
+        const depreciationDebitTransaction = await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Beban',
+            accountCode: '6105', // Beban Penyusutan
+            description: `Penyusutan aset: ${assetName}`,
+            amount: accumulatedDepreciation,
+            notes: `Penyusutan otomatis untuk aset tetap ID: ${asset.id}`,
+            updatedAt: new Date()
+          }
+        });
+
+        // Buat transaksi kredit ke akumulasi penyusutan
+        const depreciationCreditTransaction = await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Akumulasi Penyusutan',
+            accountCode: accDepreciationAccountCode,
+            description: `Akumulasi penyusutan: ${assetName}`,
+            amount: -accumulatedDepreciation, // Nilai negatif untuk kredit
+            notes: `Penyusutan otomatis untuk aset tetap ID: ${asset.id}`,
+            updatedAt: new Date()
+          }
+        });
+      }
+
+      return {
+        asset,
+        debitTransaction,
+        creditTransaction
+      };
     });
 
     res.status(201).json({
       success: true,
-      message: 'Aset tetap berhasil ditambahkan',
-      data: asset
+      message: 'Aset tetap berhasil ditambahkan dengan pencatatan double-entry',
+      data: result.asset,
+      transactions: {
+        debit: result.debitTransaction,
+        credit: result.creditTransaction
+      }
     });
   } catch (error) {
+    console.error('Error adding fixed asset:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menambahkan aset tetap',
@@ -215,16 +325,16 @@ router.post('/', authenticate, async (req, res) => {
 
 /**
  * @route   PUT /api/assets/:id
- * @desc    Update fixed asset
+ * @desc    Update fixed asset with double-entry transactions for adjustments
  * @access  Private
  */
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { assetName, category, acquisitionDate, value, usefulLife } = req.body;
+    const { assetName, category, acquisitionDate, value, usefulLife, description, location, assetTag } = req.body;
 
     // Check if asset exists
-    const existingAsset = await prisma.fixedasset.findUnique({
+    const existingAsset = await prisma.fixedAsset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -290,30 +400,177 @@ router.put('/:id', authenticate, async (req, res) => {
     }
 
     // Recalculate depreciation if any value affecting it has changed
-    if (acquisitionDate || value || usefulLife) {
-      const acquisitionDateObj = updateData.acquisitionDate || existingAsset.acquisitionDate;
-      const valueToUse = assetValue || existingAsset.value;
-      const usefulLifeToUse = assetUsefulLife || existingAsset.usefulLife;
-      
-      const currentDate = new Date();
-      const ageInYears = (currentDate - acquisitionDateObj) / (1000 * 60 * 60 * 24 * 365);
-      const depreciation = Math.min(ageInYears, usefulLifeToUse) * (valueToUse / usefulLifeToUse);
-      updateData.accumulatedDepreciation = Math.min(valueToUse, Math.max(0, depreciation));
-      updateData.bookValue = valueToUse - updateData.accumulatedDepreciation;
-    }
+    const acquisitionDateObj = updateData.acquisitionDate || existingAsset.acquisitionDate;
+    const valueToUse = assetValue || existingAsset.value;
+    const usefulLifeToUse = assetUsefulLife || existingAsset.usefulLife;
+    
+    const currentDate = new Date();
+    const ageInYears = (currentDate - acquisitionDateObj) / (1000 * 60 * 60 * 24 * 365);
+    const depreciation = Math.min(ageInYears, usefulLifeToUse) * (valueToUse / usefulLifeToUse);
+    updateData.accumulatedDepreciation = Math.min(valueToUse, Math.max(0, depreciation));
+    updateData.bookValue = valueToUse - updateData.accumulatedDepreciation;
 
-    // Update fixed asset
-    const updatedAsset = await prisma.fixedasset.update({
-      where: { id: parseInt(id) },
-      data: updateData
+    // Gunakan transaksi database untuk memastikan semua operasi berhasil atau gagal bersama-sama
+    const result = await prisma.$transaction(async (prisma) => {
+      // 1. Update aset tetap
+      const updatedAsset = await prisma.fixedAsset.update({
+        where: { id: parseInt(id) },
+        data: updateData
+      });
+
+      // 2. Jika nilai aset berubah, buat transaksi penyesuaian
+      const transactions = [];
+      if (assetValue && assetValue !== existingAsset.value) {
+        const valueDifference = assetValue - existingAsset.value;
+        
+        // Tentukan kode akun aset tetap berdasarkan kategori
+        let fixedAssetAccountCode;
+        const categoryToUse = category || existingAsset.category;
+        
+        switch(categoryToUse) {
+          case 'equipment':
+            fixedAssetAccountCode = '1501'; // Mesin Boring
+            break;
+          case 'vehicle':
+            fixedAssetAccountCode = '1503'; // Kendaraan Operasional
+            break;
+          case 'building':
+            fixedAssetAccountCode = '1505'; // Bangunan Kantor
+            break;
+          case 'office':
+            fixedAssetAccountCode = '1504'; // Peralatan Kantor
+            break;
+          default:
+            fixedAssetAccountCode = '1501'; // Default ke Mesin Boring
+        }
+
+        if (valueDifference > 0) {
+          // Jika nilai bertambah, buat transaksi debit ke aset tetap dan kredit ke kas/bank
+          const debitTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Aset Tetap',
+              accountCode: fixedAssetAccountCode,
+              description: `Penyesuaian nilai aset tetap: ${updatedAsset.assetName}`,
+              amount: valueDifference,
+              notes: `Penambahan nilai aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(debitTransaction);
+
+          const creditTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Pengeluaran',
+              accountCode: '1102', // Bank BCA
+              description: `Pembayaran untuk penyesuaian aset tetap: ${updatedAsset.assetName}`,
+              amount: -valueDifference, // Nilai negatif untuk kredit
+              notes: `Penambahan nilai aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(creditTransaction);
+        } else if (valueDifference < 0) {
+          // Jika nilai berkurang, buat transaksi debit ke kas/bank dan kredit ke aset tetap
+          const debitTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Penerimaan',
+              accountCode: '1102', // Bank BCA
+              description: `Pengembalian dari penyesuaian aset tetap: ${updatedAsset.assetName}`,
+              amount: -valueDifference, // Nilai positif karena valueDifference negatif
+              notes: `Pengurangan nilai aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(debitTransaction);
+
+          const creditTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Aset Tetap',
+              accountCode: fixedAssetAccountCode,
+              description: `Penyesuaian nilai aset tetap: ${updatedAsset.assetName}`,
+              amount: valueDifference, // Nilai negatif untuk kredit
+              notes: `Pengurangan nilai aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(creditTransaction);
+        }
+      }
+
+      // 3. Jika ada perubahan pada penyusutan, buat transaksi penyesuaian
+      if (updateData.accumulatedDepreciation !== existingAsset.accumulatedDepreciation) {
+        const depreciationDifference = updateData.accumulatedDepreciation - existingAsset.accumulatedDepreciation;
+        
+        if (depreciationDifference !== 0) {
+          // Tentukan kode akun akumulasi penyusutan berdasarkan kategori
+          let accDepreciationAccountCode;
+          const categoryToUse = category || existingAsset.category;
+          
+          switch(categoryToUse) {
+            case 'equipment':
+              accDepreciationAccountCode = '1601'; // Akumulasi Penyusutan Mesin Boring
+              break;
+            case 'vehicle':
+              accDepreciationAccountCode = '1603'; // Akumulasi Penyusutan Kendaraan
+              break;
+            case 'building':
+              accDepreciationAccountCode = '1605'; // Akumulasi Penyusutan Bangunan
+              break;
+            case 'office':
+              accDepreciationAccountCode = '1604'; // Akumulasi Penyusutan Peralatan Kantor
+              break;
+            default:
+              accDepreciationAccountCode = '1601'; // Default ke Akumulasi Penyusutan Mesin Boring
+          }
+
+          // Buat transaksi debit ke beban penyusutan
+          const depreciationDebitTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Beban',
+              accountCode: '6105', // Beban Penyusutan
+              description: `Penyesuaian penyusutan aset: ${updatedAsset.assetName}`,
+              amount: depreciationDifference,
+              notes: `Penyesuaian penyusutan untuk aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(depreciationDebitTransaction);
+
+          // Buat transaksi kredit ke akumulasi penyusutan
+          const depreciationCreditTransaction = await prisma.transaction.create({
+            data: {
+              date: currentDate,
+              type: 'Akumulasi Penyusutan',
+              accountCode: accDepreciationAccountCode,
+              description: `Penyesuaian akumulasi penyusutan: ${updatedAsset.assetName}`,
+              amount: -depreciationDifference, // Nilai negatif untuk kredit
+              notes: `Penyesuaian penyusutan untuk aset tetap ID: ${updatedAsset.id}`,
+              updatedAt: new Date()
+            }
+          });
+          transactions.push(depreciationCreditTransaction);
+        }
+      }
+
+      return {
+        updatedAsset,
+        transactions
+      };
     });
 
     res.json({
       success: true,
-      message: 'Aset tetap berhasil diperbarui',
-      data: updatedAsset
+      message: 'Aset tetap berhasil diperbarui dengan pencatatan double-entry',
+      data: result.updatedAsset,
+      transactions: result.transactions
     });
   } catch (error) {
+    console.error('Error updating fixed asset:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat memperbarui aset tetap',
@@ -324,10 +581,10 @@ router.put('/:id', authenticate, async (req, res) => {
 
 /**
  * @route   POST /api/assets/:id/depreciate
- * @desc    Apply depreciation to a fixed asset
+ * @desc    Apply depreciation to a fixed asset with double-entry transactions
  * @access  Private
  */
-router.post('/:id/depreciate', authenticate, async (req, res) => {
+router.post('/:id/depreciate', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { date } = req.body;
@@ -336,7 +593,7 @@ router.post('/:id/depreciate', authenticate, async (req, res) => {
     const depreciationDate = date ? new Date(date) : new Date();
 
     // Check if asset exists
-    const asset = await prisma.fixedasset.findUnique({
+    const asset = await prisma.fixedAsset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -353,30 +610,98 @@ router.post('/:id/depreciate', authenticate, async (req, res) => {
     const depreciation = Math.min(ageInYears, asset.usefulLife) * (asset.value / asset.usefulLife);
     const newAccumulatedDepreciation = Math.min(asset.value, Math.max(0, depreciation));
     const newBookValue = asset.value - newAccumulatedDepreciation;
+    
+    // Hitung selisih penyusutan
+    const depreciationDifference = newAccumulatedDepreciation - asset.accumulatedDepreciation;
+    
+    // Jika tidak ada perubahan penyusutan, kembalikan respons tanpa perubahan
+    if (depreciationDifference <= 0) {
+      return res.json({
+        success: true,
+        message: 'Tidak ada perubahan penyusutan',
+        data: asset
+      });
+    }
 
-    // Update asset with new depreciation values
-    const updatedAsset = await prisma.fixedasset.update({
-      where: { id: parseInt(id) },
-      data: {
-        accumulatedDepreciation: newAccumulatedDepreciation,
-        bookValue: newBookValue,
-        updatedAt: new Date()
+    // Gunakan transaksi database untuk memastikan semua operasi berhasil atau gagal bersama-sama
+    const result = await prisma.$transaction(async (prisma) => {
+      // 1. Update aset tetap dengan nilai penyusutan baru
+      const updatedAsset = await prisma.fixedAsset.update({
+        where: { id: parseInt(id) },
+        data: {
+          accumulatedDepreciation: newAccumulatedDepreciation,
+          bookValue: newBookValue,
+          updatedAt: new Date()
+        }
+      });
+      
+      // 2. Tentukan kode akun akumulasi penyusutan berdasarkan kategori
+      let accDepreciationAccountCode;
+      
+      switch(asset.category) {
+        case 'equipment':
+          accDepreciationAccountCode = '1601'; // Akumulasi Penyusutan Mesin Boring
+          break;
+        case 'vehicle':
+          accDepreciationAccountCode = '1603'; // Akumulasi Penyusutan Kendaraan
+          break;
+        case 'building':
+          accDepreciationAccountCode = '1605'; // Akumulasi Penyusutan Bangunan
+          break;
+        case 'office':
+          accDepreciationAccountCode = '1604'; // Akumulasi Penyusutan Peralatan Kantor
+          break;
+        default:
+          accDepreciationAccountCode = '1601'; // Default ke Akumulasi Penyusutan Mesin Boring
       }
+      
+      // 3. Buat transaksi debit ke beban penyusutan
+      const depreciationDebitTransaction = await prisma.transaction.create({
+        data: {
+          date: depreciationDate,
+          type: 'Beban',
+          accountCode: '6105', // Beban Penyusutan
+          description: `Penyusutan aset: ${asset.assetName}`,
+          amount: depreciationDifference,
+          notes: `Penyusutan manual untuk aset tetap ID: ${asset.id}`,
+          updatedAt: new Date()
+        }
+      });
+      
+      // 4. Buat transaksi kredit ke akumulasi penyusutan
+      const depreciationCreditTransaction = await prisma.transaction.create({
+        data: {
+          date: depreciationDate,
+          type: 'Akumulasi Penyusutan',
+          accountCode: accDepreciationAccountCode,
+          description: `Akumulasi penyusutan: ${asset.assetName}`,
+          amount: -depreciationDifference, // Nilai negatif untuk kredit
+          notes: `Penyusutan manual untuk aset tetap ID: ${asset.id}`,
+          updatedAt: new Date()
+        }
+      });
+      
+      return {
+        updatedAsset,
+        transactions: [depreciationDebitTransaction, depreciationCreditTransaction]
+      };
     });
 
     res.json({
       success: true,
-      message: 'Penyusutan aset berhasil diperbarui',
-      data: updatedAsset,
+      message: 'Penyusutan aset berhasil diperbarui dengan pencatatan double-entry',
+      data: result.updatedAsset,
       depreciation: {
         previousAccumulatedDepreciation: asset.accumulatedDepreciation,
         newAccumulatedDepreciation,
-        depreciationAmount: newAccumulatedDepreciation - asset.accumulatedDepreciation,
+        depreciationAmount: depreciationDifference,
         previousBookValue: asset.bookValue,
         newBookValue
-      }
+      },
+      transactions: result.transactions
     });
   } catch (error) {
+    console.error('Error updating asset depreciation:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat memperbarui penyusutan aset',
@@ -387,15 +712,15 @@ router.post('/:id/depreciate', authenticate, async (req, res) => {
 
 /**
  * @route   DELETE /api/assets/:id
- * @desc    Delete fixed asset
- * @access  Private (Admin only)
+ * @desc    Delete fixed asset with double-entry transactions
+ * @access  Private
  */
-router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
 
     // Check if asset exists
-    const existingAsset = await prisma.fixedasset.findUnique({
+    const existingAsset = await prisma.fixedAsset.findUnique({
       where: { id: parseInt(id) }
     });
 
@@ -406,16 +731,107 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
-    // Delete asset
-    await prisma.fixedasset.delete({
-      where: { id: parseInt(id) }
+    // Gunakan transaksi database untuk memastikan semua operasi berhasil atau gagal bersama-sama
+    await prisma.$transaction(async (prisma) => {
+      // 1. Tentukan kode akun aset tetap dan akumulasi penyusutan berdasarkan kategori
+      let fixedAssetAccountCode;
+      let accDepreciationAccountCode;
+      
+      switch(existingAsset.category) {
+        case 'equipment':
+          fixedAssetAccountCode = '1501'; // Mesin Boring
+          accDepreciationAccountCode = '1601'; // Akumulasi Penyusutan Mesin Boring
+          break;
+        case 'vehicle':
+          fixedAssetAccountCode = '1503'; // Kendaraan Operasional
+          accDepreciationAccountCode = '1603'; // Akumulasi Penyusutan Kendaraan
+          break;
+        case 'building':
+          fixedAssetAccountCode = '1505'; // Bangunan Kantor
+          accDepreciationAccountCode = '1605'; // Akumulasi Penyusutan Bangunan
+          break;
+        case 'office':
+          fixedAssetAccountCode = '1504'; // Peralatan Kantor
+          accDepreciationAccountCode = '1604'; // Akumulasi Penyusutan Peralatan Kantor
+          break;
+        default:
+          fixedAssetAccountCode = '1501'; // Default ke Mesin Boring
+          accDepreciationAccountCode = '1601'; // Default ke Akumulasi Penyusutan Mesin Boring
+      }
+
+      const currentDate = new Date();
+      const remainingBookValue = existingAsset.bookValue;
+      
+      // 2. Jika ada nilai buku yang tersisa, buat transaksi untuk menghapus nilai buku
+      if (remainingBookValue > 0) {
+        // Buat transaksi debit ke beban (kerugian penghapusan aset)
+        await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Beban',
+            accountCode: '6105', // Beban Penyusutan (bisa diganti dengan akun kerugian penghapusan aset jika ada)
+            description: `Kerugian penghapusan aset tetap: ${existingAsset.assetName}`,
+            amount: remainingBookValue,
+            notes: `Penghapusan aset tetap ID: ${existingAsset.id}`,
+            updatedAt: new Date()
+          }
+        });
+
+        // Buat transaksi kredit ke aset tetap (menghapus nilai buku)
+        await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Aset Tetap',
+            accountCode: fixedAssetAccountCode,
+            description: `Penghapusan nilai buku aset tetap: ${existingAsset.assetName}`,
+            amount: -remainingBookValue, // Nilai negatif untuk kredit
+            notes: `Penghapusan aset tetap ID: ${existingAsset.id}`,
+            updatedAt: new Date()
+          }
+        });
+      }
+
+      // 3. Jika ada akumulasi penyusutan, buat transaksi untuk menghapus akumulasi penyusutan
+      if (existingAsset.accumulatedDepreciation > 0) {
+        // Buat transaksi debit ke akumulasi penyusutan (menghapus akumulasi penyusutan)
+        await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Akumulasi Penyusutan',
+            accountCode: accDepreciationAccountCode,
+            description: `Penghapusan akumulasi penyusutan: ${existingAsset.assetName}`,
+            amount: existingAsset.accumulatedDepreciation, // Nilai positif untuk debit
+            notes: `Penghapusan aset tetap ID: ${existingAsset.id}`,
+            updatedAt: new Date()
+          }
+        });
+
+        // Buat transaksi kredit ke aset tetap (menghapus nilai aset yang sudah disusutkan)
+        await prisma.transaction.create({
+          data: {
+            date: currentDate,
+            type: 'Aset Tetap',
+            accountCode: fixedAssetAccountCode,
+            description: `Penghapusan nilai aset tetap yang sudah disusutkan: ${existingAsset.assetName}`,
+            amount: -existingAsset.accumulatedDepreciation, // Nilai negatif untuk kredit
+            notes: `Penghapusan aset tetap ID: ${existingAsset.id}`,
+            updatedAt: new Date()
+          }
+        });
+      }
+
+      // 4. Hapus aset tetap
+      await prisma.fixedAsset.delete({
+        where: { id: parseInt(id) }
+      });
     });
 
     res.json({
       success: true,
-      message: 'Aset tetap berhasil dihapus'
+      message: 'Aset tetap berhasil dihapus dengan pencatatan double-entry'
     });
   } catch (error) {
+    console.error('Error deleting fixed asset:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menghapus aset tetap',
@@ -429,7 +845,7 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
  * @desc    Calculate and update depreciation for a single asset
  * @access  Private
  */
-router.post('/:id/calculate-depreciation', authenticate, async (req, res) => {
+router.post('/:id/calculate-depreciation', auth, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -455,7 +871,7 @@ router.post('/:id/calculate-depreciation', authenticate, async (req, res) => {
  * @desc    Calculate and update depreciation for all assets
  * @access  Private (Admin only)
  */
-router.post('/calculate-all-depreciation', authenticate, authorize(['admin']), async (req, res) => {
+router.post('/calculate-all-depreciation', auth, authorize(['admin']), async (req, res) => {
   try {
     // Calculate and update depreciation for all assets
     const result = await depreciationService.updateAllAssetsDepreciation();
@@ -465,6 +881,155 @@ router.post('/calculate-all-depreciation', authenticate, authorize(['admin']), a
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menghitung penyusutan semua aset',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/assets/:id/depreciation
+ * @desc    Get depreciation history for an asset
+ * @access  Private
+ */
+router.get('/:id/depreciation', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get asset details
+    const asset = await prisma.fixedAsset.findUnique({
+      where: { id: parseInt(id) }
+    });
+    
+    if (!asset) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Aset tidak ditemukan' 
+      });
+    }
+    
+    // Calculate depreciation info
+    const acquisitionDate = new Date(asset.acquisitionDate);
+    const currentDate = new Date();
+    const valueAmount = parseFloat(asset.value.toString());
+    const usefulLifeYears = asset.usefulLife;
+    const usefulLifeMonths = usefulLifeYears * 12;
+    
+    // Calculate monthly depreciation
+    const monthlyDepreciation = valueAmount / usefulLifeMonths;
+    
+    // Calculate age in months
+    const ageInMonths = (currentDate.getFullYear() - acquisitionDate.getFullYear()) * 12 + 
+      (currentDate.getMonth() - acquisitionDate.getMonth());
+    
+    // Calculate total depreciation to date (capped at total value)
+    const totalDepreciationToDate = Math.min(
+      valueAmount,
+      asset.accumulatedDepreciation
+    );
+    
+    // Calculate remaining depreciable amount
+    const remainingDepreciableAmount = valueAmount - totalDepreciationToDate;
+    
+    // Calculate remaining useful life in months
+    const remainingMonths = Math.max(0, usefulLifeMonths - ageInMonths);
+    
+    // Calculate percentage depreciated
+    const percentageDepreciated = (totalDepreciationToDate / valueAmount) * 100;
+    
+    res.json({
+      success: true,
+      data: {
+        asset,
+        depreciationInfo: {
+          acquisitionDate,
+          valueAmount,
+          usefulLifeYears,
+          usefulLifeMonths,
+          monthlyDepreciation,
+          ageInMonths,
+          totalDepreciationToDate,
+          remainingDepreciableAmount,
+          remainingMonths,
+          percentageDepreciated,
+          currentBookValue: asset.bookValue
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error getting asset depreciation:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat mengambil data depresiasi aset',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/assets/:id/schedule
+ * @desc    Get depreciation schedule for an asset
+ * @access  Private
+ */
+router.get('/:id/schedule', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get asset details
+    const asset = await prisma.fixedAsset.findUnique({
+      where: { id: parseInt(id) }
+    });
+    
+    if (!asset) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Aset tidak ditemukan' 
+      });
+    }
+    
+    // Calculate depreciation schedule
+    const schedule = [];
+    const acquisitionDate = new Date(asset.acquisitionDate);
+    const usefulLifeYears = asset.usefulLife;
+    const valueAmount = parseFloat(asset.value.toString());
+    const monthlyDepreciation = valueAmount / (usefulLifeYears * 12);
+    
+    let currentValue = valueAmount;
+    let accumulatedDepreciation = 0;
+    
+    // Generate monthly schedule for the entire useful life
+    for (let i = 0; i < usefulLifeYears * 12; i++) {
+      const date = new Date(acquisitionDate);
+      date.setMonth(date.getMonth() + i);
+      
+      // For the last month, adjust to ensure we don't depreciate below zero
+      const depreciationAmount = i === usefulLifeYears * 12 - 1 
+        ? currentValue 
+        : monthlyDepreciation;
+      
+      accumulatedDepreciation += depreciationAmount;
+      currentValue -= depreciationAmount;
+      
+      // Ensure book value doesn't go below zero
+      if (currentValue < 0) currentValue = 0;
+      
+      schedule.push({
+        date,
+        month: i + 1,
+        depreciationAmount,
+        accumulatedDepreciation,
+        bookValue: currentValue
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: schedule
+    });
+  } catch (error) {
+    console.error('Error getting depreciation schedule:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat mengambil jadwal depresiasi',
       error: error.message 
     });
   }

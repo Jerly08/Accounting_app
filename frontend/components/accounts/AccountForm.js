@@ -21,17 +21,36 @@ import {
   AlertTitle,
   AlertDescription,
   Box,
+  Checkbox,
+  Divider,
+  HStack,
+  Tooltip,
+  IconButton,
 } from '@chakra-ui/react';
+import { FiInfo } from 'react-icons/fi';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 
 const ACCOUNT_TYPES = ['Pendapatan', 'Beban', 'Aktiva', 'Aset Tetap', 'Kontra Aset'];
+const CASHFLOW_CATEGORIES = ['Income', 'Expense', 'Asset', 'Fixed Asset', 'Contra Asset', 'Other'];
+const SUBCATEGORIES = {
+  'Income': ['Sales', 'Service', 'Interest', 'Other Income'],
+  'Expense': ['Operating', 'Administrative', 'Marketing', 'Financial', 'Other Expense'],
+  'Asset': ['Cash', 'Bank', 'Receivable', 'Inventory', 'Other Asset'],
+  'Fixed Asset': ['Building', 'Land', 'Equipment', 'Vehicle', 'Other Fixed Asset'],
+  'Contra Asset': ['Accumulated Depreciation', 'Allowance for Bad Debt', 'Other Contra'],
+  'Other': ['Miscellaneous'],
+};
 
 const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes = ACCOUNT_TYPES }) => {
   const initialFormData = {
     code: '',
     name: '',
     type: '',
+    category: '',
+    subcategory: '',
+    isCurrentAsset: true,
+    isCurrentLiability: true,
   };
 
   const [formData, setFormData] = useState(initialFormData);
@@ -40,6 +59,7 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
   const [isEditMode, setIsEditMode] = useState(false);
   const [isCheckingCode, setIsCheckingCode] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [availableSubcategories, setAvailableSubcategories] = useState([]);
   const toast = useToast();
   const { token, isAuthenticated, isAdmin } = useAuth();
 
@@ -49,11 +69,21 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
         code: account.code || '',
         name: account.name || '',
         type: account.type || '',
+        category: account.category || '',
+        subcategory: account.subcategory || '',
+        isCurrentAsset: account.isCurrentAsset !== false,
+        isCurrentLiability: account.isCurrentLiability !== false,
       });
       setIsEditMode(true);
+      
+      // Set available subcategories based on selected category
+      if (account.category) {
+        setAvailableSubcategories(SUBCATEGORIES[account.category] || []);
+      }
     } else {
       setFormData(initialFormData);
       setIsEditMode(false);
+      setAvailableSubcategories([]);
     }
     setErrors({});
     setSubmitError('');
@@ -74,6 +104,10 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
     
     if (!formData.type) {
       newErrors.type = 'Account type is required';
+    }
+    
+    if (!formData.category) {
+      newErrors.category = 'Cashflow category is required';
     }
 
     setErrors(newErrors);
@@ -112,10 +146,22 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value,
-    });
+    
+    // Special handling for category to update subcategories
+    if (name === 'category') {
+      setAvailableSubcategories(SUBCATEGORIES[value] || []);
+      // Reset subcategory when category changes
+      setFormData({
+        ...formData,
+        [name]: value,
+        subcategory: '',
+      });
+    } else {
+      setFormData({
+        ...formData,
+        [name]: value,
+      });
+    }
     
     // Clear error when field is changed
     if (errors[name]) {
@@ -129,6 +175,14 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
     if (submitError) {
       setSubmitError('');
     }
+  };
+  
+  const handleCheckboxChange = (e) => {
+    const { name, checked } = e.target;
+    setFormData({
+      ...formData,
+      [name]: checked,
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -206,8 +260,18 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
       };
       
       // Prepare data for submission
-      // For updates, only send name and type as code is part of the URL
-      const dataToSubmit = isEditMode ? { name: formData.name, type: formData.type } : formData;
+      const dataToSubmit = {
+        name: formData.name,
+        type: formData.type,
+        category: formData.category,
+        subcategory: formData.subcategory,
+        isCurrentAsset: formData.isCurrentAsset,
+        isCurrentLiability: formData.isCurrentLiability
+      };
+      
+      if (!isEditMode) {
+        dataToSubmit.code = formData.code;
+      }
       
       if (isEditMode) {
         // Update existing account
@@ -230,7 +294,7 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
         const apiUrl = '/api/accounts';
         console.log('POST request to:', apiUrl);
         
-        await axios.post(apiUrl, formData, config);
+        await axios.post(apiUrl, dataToSubmit, config);
         
         toast({
           title: 'Success',
@@ -249,39 +313,14 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
     } catch (error) {
       console.error('Error saving account:', error);
       
-      let errorMsg = 'Failed to save account. Please try again.';
+      // Extract error message from API response if available
+      const errorMessage = error.response?.data?.message || 'Failed to save account';
       
-      // Detailed error logging for debugging
-      if (error.response) {
-        console.error('Error response:', error.response);
-        
-        // Handle specific error cases
-        if (error.response.status === 400) {
-          if (error.response.data && error.response.data.message === 'Kode akun sudah digunakan') {
-            errorMsg = 'This account code is already in use. Please use a different code.';
-            setErrors({
-              ...errors,
-              code: errorMsg
-            });
-          } else {
-            errorMsg = error.response.data?.message || 'Failed to save account. Please check your input.';
-          }
-        } else {
-          errorMsg = 'An error occurred while saving the account. Please try again.';
-        }
-      } else if (error.request) {
-        console.error('No response received:', error.request);
-        errorMsg = 'No response from server. Please check your connection and try again.';
-      } else {
-        console.error('Error setting up request:', error.message);
-        errorMsg = 'Error setting up request. Please try again.';
-      }
-      
-      setSubmitError(errorMsg);
+      setSubmitError(errorMessage);
       
       toast({
         title: 'Error',
-        description: errorMsg,
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -292,75 +331,156 @@ const AccountForm = ({ isOpen, onClose, account, onSubmitSuccess, accountTypes =
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="md">
+    <Modal isOpen={isOpen} onClose={onClose} size="lg">
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader>{isEditMode ? 'Edit Account' : 'Add New Account'}</ModalHeader>
+        <ModalHeader>
+          {isEditMode ? 'Edit Account' : 'Add New Account'}
+        </ModalHeader>
         <ModalCloseButton />
-        <form onSubmit={handleSubmit}>
-          <ModalBody>
-            <VStack spacing={4}>
-              {submitError && (
-                <Alert status="error" borderRadius="md">
-                  <AlertIcon />
-                  {submitError}
-                </Alert>
-              )}
-              
-              <FormControl isInvalid={errors.code} isDisabled={isEditMode}>
-                <FormLabel>Account Code</FormLabel>
-                <Input
-                  name="code"
-                  value={formData.code}
-                  onChange={handleChange}
-                  placeholder="Enter 4-digit account code"
-                />
-                <FormErrorMessage>{errors.code}</FormErrorMessage>
-              </FormControl>
-
-              <FormControl isInvalid={errors.name}>
-                <FormLabel>Account Name</FormLabel>
-                <Input
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="Enter account name"
-                />
-                <FormErrorMessage>{errors.name}</FormErrorMessage>
-              </FormControl>
-
-              <FormControl isInvalid={errors.type}>
-                <FormLabel>Account Type</FormLabel>
-                <Select
-                  name="type"
-                  value={formData.type}
-                  onChange={handleChange}
-                  placeholder="Select account type"
-                >
-                  {accountTypes.map(type => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </Select>
-                <FormErrorMessage>{errors.type}</FormErrorMessage>
-              </FormControl>
-            </VStack>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button mr={3} onClick={onClose} variant="ghost">
-              Cancel
-            </Button>
-            <Button 
-              colorScheme="teal" 
-              type="submit" 
-              isLoading={isSubmitting || isCheckingCode}
-              loadingText={isCheckingCode ? "Checking" : "Saving"}
-              isDisabled={isCheckingCode}
-            >
-              {isEditMode ? 'Update' : 'Create'}
-            </Button>
-          </ModalFooter>
-        </form>
+        
+        <ModalBody>
+          {submitError && (
+            <Alert status="error" mb={4}>
+              <AlertIcon />
+              <AlertTitle mr={2}>Error!</AlertTitle>
+              <AlertDescription>{submitError}</AlertDescription>
+            </Alert>
+          )}
+          
+          <VStack spacing={4} align="stretch">
+            <FormControl isInvalid={!!errors.code} isDisabled={isEditMode}>
+              <FormLabel htmlFor="code">Account Code</FormLabel>
+              <Input
+                id="code"
+                name="code"
+                value={formData.code}
+                onChange={handleChange}
+                placeholder="Enter 4-digit account code"
+                isDisabled={isEditMode || isCheckingCode}
+              />
+              <FormErrorMessage>{errors.code}</FormErrorMessage>
+            </FormControl>
+            
+            <FormControl isInvalid={!!errors.name}>
+              <FormLabel htmlFor="name">Account Name</FormLabel>
+              <Input
+                id="name"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                placeholder="Enter account name"
+              />
+              <FormErrorMessage>{errors.name}</FormErrorMessage>
+            </FormControl>
+            
+            <FormControl isInvalid={!!errors.type}>
+              <FormLabel htmlFor="type">Account Type</FormLabel>
+              <Select
+                id="type"
+                name="type"
+                value={formData.type}
+                onChange={handleChange}
+                placeholder="Select account type"
+              >
+                {accountTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </Select>
+              <FormErrorMessage>{errors.type}</FormErrorMessage>
+            </FormControl>
+            
+            <Divider my={2} />
+            
+            <Box>
+              <Text fontWeight="medium" mb={2}>Cashflow Categorization</Text>
+            </Box>
+            
+            <FormControl isInvalid={!!errors.category}>
+              <FormLabel htmlFor="category">
+                <HStack>
+                  <Text>Cashflow Category</Text>
+                  <Tooltip label="This category is used for cashflow reporting">
+                    <IconButton
+                      aria-label="Info about cashflow categories"
+                      icon={<FiInfo />}
+                      size="xs"
+                      variant="ghost"
+                    />
+                  </Tooltip>
+                </HStack>
+              </FormLabel>
+              <Select
+                id="category"
+                name="category"
+                value={formData.category}
+                onChange={handleChange}
+                placeholder="Select cashflow category"
+              >
+                {CASHFLOW_CATEGORIES.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </Select>
+              <FormErrorMessage>{errors.category}</FormErrorMessage>
+            </FormControl>
+            
+            <FormControl>
+              <FormLabel htmlFor="subcategory">Subcategory</FormLabel>
+              <Select
+                id="subcategory"
+                name="subcategory"
+                value={formData.subcategory}
+                onChange={handleChange}
+                placeholder="Select subcategory"
+                isDisabled={!formData.category}
+              >
+                {availableSubcategories.map(subcategory => (
+                  <option key={subcategory} value={subcategory}>{subcategory}</option>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <Divider my={2} />
+            
+            <Box>
+              <Text fontWeight="medium" mb={2}>Additional Properties</Text>
+            </Box>
+            
+            <FormControl>
+              <Checkbox
+                name="isCurrentAsset"
+                isChecked={formData.isCurrentAsset}
+                onChange={handleCheckboxChange}
+              >
+                Is Current Asset
+              </Checkbox>
+            </FormControl>
+            
+            <FormControl>
+              <Checkbox
+                name="isCurrentLiability"
+                isChecked={formData.isCurrentLiability}
+                onChange={handleCheckboxChange}
+              >
+                Is Current Liability
+              </Checkbox>
+            </FormControl>
+          </VStack>
+        </ModalBody>
+        
+        <ModalFooter>
+          <Button variant="ghost" mr={3} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button 
+            colorScheme="blue" 
+            onClick={handleSubmit}
+            isLoading={isSubmitting}
+            loadingText={isEditMode ? "Updating..." : "Creating..."}
+          >
+            {isEditMode ? 'Update' : 'Create'}
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );

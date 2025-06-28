@@ -1,213 +1,191 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { authenticate } = require('../middleware/auth');
-const { prisma } = require('../utils/prisma');
+const bcrypt = require('bcryptjs');
+const prismaUtil = require('../utils/prisma');
+const prisma = prismaUtil.prisma;
+const { auth } = require('../middleware/auth');
 
-// Login route
-router.post('/login', async (req, res) => {
-  console.log('Login attempt:', { 
-    body: req.body,
-    headers: req.headers
-  });
-  
-  try {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-      console.log('Missing username or password');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Username dan password harus diisi' 
-      });
-    }
-    
-    console.log('Finding user with username:', username);
-    
-    // Find user by username
-    const user = await prisma.user.findUnique({
-      where: { username }
-    });
+// Initialize token blacklist if not exists
+if (!global.tokenBlacklist) {
+  global.tokenBlacklist = new Set();
+}
 
-    console.log('User found:', user ? 'Yes' : 'No');
-    if (user) {
-      console.log('User details (excluding password):', {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      });
-    }
-
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Username atau password salah' });
-    }
-
-    // Check password
-    console.log('Comparing password');
-    console.log('Input password:', password);
-    console.log('Stored hashed password:', user.password);
-    
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    console.log('Password valid:', isPasswordValid);
-    
-    if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: 'Username atau password salah' });
-    }
-
-    // Generate JWT token
-    console.log('Generating JWT token');
-    console.log('JWT_SECRET available:', !!process.env.JWT_SECRET);
-    console.log('JWT_EXPIRES_IN:', process.env.JWT_EXPIRES_IN);
-    
-    const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
-      process.env.JWT_SECRET || 'secure_jwt_secret_key_for_accounting_app',
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
-
-    // Return token and user data (excluding password)
-    const { password: _, ...userData } = user;
-    console.log('Login successful for user:', userData.username);
-    
-    res.json({
-      success: true,
-      message: 'Login berhasil',
-      token,
-      user: userData
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, message: 'Error saat login', error: error.message });
-  }
-});
-
-// Register route
+// @route   POST api/auth/register
+// @desc    Register user
+// @access  Public
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password, name, role = 'user' } = req.body;
-    
-    // Validate required fields
-    if (!username || !email || !password || !name) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Semua field wajib diisi (username, email, password, name)' 
-      });
-    }
-    
-    // Check if username or email already exists
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username },
-          { email }
-        ]
-      }
+    const { name, email, password, role = 'user', username } = req.body;
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
     });
 
     if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Username atau email sudah digunakan' 
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Check if username already exists (if provided)
+    if (username) {
+      const existingUsername = await prisma.user.findUnique({
+        where: { username }
       });
+
+      if (existingUsername) {
+        return res.status(400).json({ message: 'Username already taken' });
+      }
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Create new user with current date for timestamps
-    const now = new Date();
-    const newUser = await prisma.user.create({
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create user
+    const user = await prisma.user.create({
       data: {
-        username,
-        email,
-        password: hashedPassword,
         name,
-        role: role || 'user',
-        createdAt: now,
-        updatedAt: now
+        email,
+        username: username || email, // Use email as username if not provided
+        password: hashedPassword,
+        role,
+        updatedAt: new Date()
       }
     });
 
-    // Remove password from response
-    const { password: _, ...userData } = newUser;
-    
-    // Generate token for immediate login
+    // Create token
     const token = jwt.sign(
-      { userId: newUser.id, username: newUser.username, role: newUser.role },
-      process.env.JWT_SECRET || 'secure_jwt_secret_key_for_accounting_app',
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+      { id: user.id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
     );
-    
+
     res.status(201).json({
-      success: true,
-      message: 'Registrasi berhasil',
-      user: userData,
-      token
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        role: user.role
+      }
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saat registrasi', 
-      error: error.message 
-    });
+    console.error('Register error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Get current user profile
-router.get('/profile', authenticate, async (req, res) => {
+// @route   POST api/auth/login
+// @desc    Authenticate user & get token
+// @access  Public
+router.post('/login', async (req, res) => {
   try {
-    // User is already attached to req by the authenticate middleware
-    if (!req.user || !req.user.id) {
-      return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan' });
-    }
+    const { username, email, password } = req.body;
 
-    // Get fresh user data from database
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id }
-    });
+    // Check if user exists - support login with either username or email
+    let user;
+    if (email) {
+      user = await prisma.user.findUnique({
+        where: { email }
+      });
+    } else if (username) {
+      user = await prisma.user.findUnique({
+        where: { username }
+      });
+    } else {
+      return res.status(400).json({ message: 'Username or email is required' });
+    }
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Remove password from response
-    const { password: _, ...userData } = user;
-    
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Create token
+    const token = jwt.sign(
+      { id: user.id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
     res.json({
-      success: true,
-      user: userData
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        role: user.role
+      }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saat mengambil profil', 
-      error: error.message 
-    });
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-/**
- * @route   GET /api/auth/verify
- * @desc    Verify JWT token
- * @access  Private
- */
-router.get('/verify', authenticate, async (req, res) => {
+// @route   GET api/auth/me
+// @desc    Get current user
+// @access  Private
+router.get('/me', auth, async (req, res) => {
   try {
-    // If authenticate middleware passed, token is valid
-    res.json({ 
-      success: true, 
-      message: 'Token is valid',
-      user: req.user 
+    res.json({
+      user: req.user
     });
   } catch (error) {
-    console.error('Error verifying token:', error);
-    res.status(401).json({ 
-      success: false, 
-      message: 'Invalid token' 
+    console.error('Get user error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @route   POST api/auth/logout
+// @desc    Logout user and invalidate token
+// @access  Private
+router.post('/logout', auth, async (req, res) => {
+  try {
+    // Add token to blacklist
+    const token = req.token;
+    if (token) {
+      if (!global.tokenBlacklist) {
+        global.tokenBlacklist = new Set();
+      }
+      global.tokenBlacklist.add(token);
+      
+      // Remove user from cache if exists
+      if (req.user && req.user.id && global.userCache && global.userCache.data) {
+        delete global.userCache.data[req.user.id];
+        delete global.userCache.timestamps[req.user.id];
+      }
+      
+      console.log(`User ${req.user.id} logged out, token invalidated`);
+    }
+    
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ message: 'Server error during logout' });
+  }
+});
+
+// @route   GET api/auth/verify
+// @desc    Verify token and return user data
+// @access  Private
+router.get('/verify', auth, async (req, res) => {
+  try {
+    res.json({
+      user: req.user
     });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

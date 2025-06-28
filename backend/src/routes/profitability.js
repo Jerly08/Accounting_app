@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
 const profitabilityService = require('../services/profitability');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  * @desc    Get profitability data for all projects
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const result = await profitabilityService.getAllProjectsProfitability();
     res.json(result);
@@ -28,7 +28,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get profitability summary
  * @access  Private
  */
-router.get('/summary', authenticate, async (req, res) => {
+router.get('/summary', auth, async (req, res) => {
   try {
     const result = await profitabilityService.getProfitabilitySummary();
     res.json(result);
@@ -46,7 +46,7 @@ router.get('/summary', authenticate, async (req, res) => {
  * @desc    Get detailed profitability report with filters
  * @access  Private
  */
-router.get('/report', authenticate, async (req, res) => {
+router.get('/report', auth, async (req, res) => {
   try {
     const { startDate, endDate, status, clientId } = req.query;
     
@@ -100,6 +100,7 @@ router.get('/report', authenticate, async (req, res) => {
         startDate: project.startDate,
         endDate: project.endDate,
         status: project.status,
+        progress: parseFloat(project.progress || 0),
         totalValue: parseFloat(project.totalValue),
         costs: profitabilityMetrics.totalCosts,
         billed: profitabilityMetrics.totalBilled,
@@ -110,8 +111,18 @@ router.get('/report', authenticate, async (req, res) => {
       };
     });
     
-    // Calculate summary metrics
-    const totalValue = projects.reduce((sum, project) => sum + parseFloat(project.totalValue || 0), 0);
+    // Sort projects by status and then by profit margin
+    projectsWithProfitability.sort((a, b) => {
+      // First sort by status (completed first, then ongoing)
+      if (a.status === 'completed' && b.status !== 'completed') return -1;
+      if (a.status !== 'completed' && b.status === 'completed') return 1;
+      
+      // Then sort by profit margin (descending)
+      return b.profitMargin - a.profitMargin;
+    });
+    
+    // Calculate summary metrics using the profitability metrics
+    const totalValue = projectsWithProfitability.reduce((sum, project) => sum + project.totalValue, 0);
     const totalCosts = projectsWithProfitability.reduce((sum, project) => sum + project.costs, 0);
     const totalBilled = projectsWithProfitability.reduce((sum, project) => sum + project.billed, 0);
     const totalProfit = totalBilled - totalCosts;
@@ -129,7 +140,8 @@ router.get('/report', authenticate, async (req, res) => {
         totalCosts,
         totalBilled,
         totalProfit,
-        profitMargin: parseFloat(overallProfitMargin.toFixed(2))
+        profitMargin: parseFloat(overallProfitMargin.toFixed(2)),
+        profitablePercentage: projects.length > 0 ? (profitableProjects / projects.length) * 100 : 0
       }
     });
   } catch (error) {
@@ -147,7 +159,7 @@ router.get('/report', authenticate, async (req, res) => {
  * @desc    Get profitability data for a specific project
  * @access  Private
  */
-router.get('/:projectId', authenticate, async (req, res) => {
+router.get('/:projectId', auth, async (req, res) => {
   try {
     const { projectId } = req.params;
     const result = await profitabilityService.getProjectProfitability(projectId);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Heading,
@@ -13,6 +13,7 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
+  InputRightElement,
   Badge,
   Select,
   useToast,
@@ -34,8 +35,23 @@ import {
   StatHelpText,
   StatArrow,
   keyframes,
+  useBreakpointValue,
+  Card, 
+  CardBody,
+  CardHeader,
+  CardFooter,
+  Divider,
+  ButtonGroup,
+  Checkbox,
+  useDisclosure as useAlertDialogDisclosure,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
 } from '@chakra-ui/react';
-import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus } from 'react-icons/fi';
+import { FiSearch, FiEdit, FiTrash2, FiMoreVertical, FiFilter, FiPlus, FiX } from 'react-icons/fi';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
@@ -67,12 +83,49 @@ const pulse = keyframes`
 const TYPE_COLORS = {
   'income': 'green',
   'expense': 'red',
+  'transfer': 'blue',
+  'Pendapatan': 'green',
+  'Beban': 'red',
+  'Pengeluaran': 'red',
+  'Penerimaan': 'green',
+  'Akumulasi Penyusutan': 'purple',
+  'Kontra Aset': 'purple',
+  'Aset Tetap': 'blue',
+  'Beban Penyusutan': 'red',
+  'Expenditure': 'red',
+  'DEBIT': 'blue',
+  'CREDIT': 'orange',
 };
 
 // Transaction type labels
 const TYPE_LABELS = {
   'income': 'Income',
   'expense': 'Expense',
+  'transfer': 'Transfer',
+  'Pendapatan': 'Income',
+  'Beban': 'Expense',
+  'Pengeluaran': 'Expenditure',
+  'Penerimaan': 'Receipt',
+  'Akumulasi Penyusutan': 'Accumulated Depreciation',
+  'Kontra Aset': 'Contra Asset',
+  'Aset Tetap': 'Fixed Asset',
+  'Beban Penyusutan': 'Depreciation Expense',
+  'Expenditure': 'Expenditure',
+  'DEBIT': 'DEBIT',
+  'CREDIT': 'CREDIT',
+};
+
+// Debounce function
+const debounce = (func, delay) => {
+  let timeoutId;
+  return (...args) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      func(...args);
+    }, delay);
+  };
 };
 
 const TransactionsPage = () => {
@@ -90,8 +143,25 @@ const TransactionsPage = () => {
   const [projectFilter, setProjectFilter] = useState('');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [debitCreditFilter, setDebitCreditFilter] = useState('');
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: 1000,
+    total: 0,
+    totalPages: 0
+  });
   const { token, isAuthenticated } = useAuth();
   const toast = useToast();
+  const [selectedTransactions, setSelectedTransactions] = useState([]);
+  const [isAllSelected, setIsAllSelected] = useState(false);
+  const [batchActionLoading, setBatchActionLoading] = useState(false);
+  
+  // Alert dialog for batch delete
+  const { isOpen: isDeleteAlertOpen, onOpen: onDeleteAlertOpen, onClose: onDeleteAlertClose } = useAlertDialogDisclosure();
+  const cancelRef = useRef();
+
+  // Detect mobile view
+  const isMobile = useBreakpointValue({ base: true, md: false });
 
   // Format currency
   const formatCurrency = (amount) => {
@@ -114,7 +184,7 @@ const TransactionsPage = () => {
   };
 
   // Fetch transactions and reference data
-  const fetchData = async () => {
+  const fetchData = async (page = pagination.page) => {
     if (!token || !isAuthenticated) {
       setError('You must be logged in to view transactions');
       setLoading(false);
@@ -126,11 +196,21 @@ const TransactionsPage = () => {
       
       // Build query parameters
       const params = new URLSearchParams();
+      params.append('page', 1);
+      params.append('limit', 1000);
       if (typeFilter) params.append('type', typeFilter);
       if (accountFilter) params.append('accountCode', accountFilter);
-      if (projectFilter) params.append('projectId', projectFilter);
+      if (projectFilter) {
+        if (projectFilter === 'null') {
+          // For 'No Project' selection, send null projectId to the backend
+          params.append('projectId', 'null');
+        } else {
+          params.append('projectId', projectFilter);
+        }
+      }
       if (startDateFilter) params.append('startDate', startDateFilter);
       if (endDateFilter) params.append('endDate', endDateFilter);
+      if (debitCreditFilter) params.append('debitCredit', debitCreditFilter);
       
       // Fetch transactions
       const transactionsResponse = await axios.get(
@@ -143,6 +223,12 @@ const TransactionsPage = () => {
       );
       
       setTransactions(transactionsResponse.data.data || []);
+      setPagination({
+        page: 1,
+        pageSize: 1000,
+        total: transactionsResponse.data.pagination.total,
+        totalPages: 1
+      });
       
       // Fetch accounts for filter dropdown
       const accountsResponse = await axios.get(
@@ -181,20 +267,39 @@ const TransactionsPage = () => {
     }
   };
 
+  // Debounced filter changes
+  const debouncedFetchData = useCallback(
+    debounce(() => {
+      fetchData(1); // Reset to page 1 when filters change
+    }, 500), // 500ms delay
+    [token, isAuthenticated, typeFilter, accountFilter, projectFilter, startDateFilter, endDateFilter, debitCreditFilter]
+  );
+
+  // Handle search term changes with debounce
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Handle filter changes
+  const handleFilterChange = (setter) => (e) => {
+    setter(e.target.value);
+    // Don't need to call fetchData here, useEffect will handle it
+  };
+
   useEffect(() => {
     if (token && isAuthenticated) {
-      fetchData();
+      debouncedFetchData();
     }
-  }, [token, isAuthenticated, typeFilter, accountFilter, projectFilter, startDateFilter, endDateFilter]);
+  }, [token, isAuthenticated, typeFilter, accountFilter, projectFilter, startDateFilter, endDateFilter, debitCreditFilter, debouncedFetchData]);
 
-  // Filter transactions based on search term and also remove 'transfer' type
+  // Filter transactions based on search term and debit/credit filter
   const filteredTransactions = transactions.filter((transaction) => {
     const description = transaction.description || '';
     const accountName = transaction.account?.name || '';
     const projectName = transaction.project?.name || '';
     
-    // Filter out 'transfer' type transactions
-    if (transaction.type === 'transfer') {
+    // Apply debit/credit filter if set
+    if (debitCreditFilter && transaction.type !== debitCreditFilter) {
       return false;
     }
     
@@ -204,18 +309,12 @@ const TransactionsPage = () => {
       projectName.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
-  // Calculate totals
-  const totalIncome = filteredTransactions
-    .filter(transaction => transaction.type === 'income')
-    .reduce((sum, transaction) => sum + parseFloat(transaction.amount), 0);
-  
-  const totalExpense = filteredTransactions
-    .filter(transaction => transaction.type === 'expense')
-    .reduce((sum, transaction) => sum + parseFloat(transaction.amount), 0);
-  
-  const netCashFlow = totalIncome - totalExpense;
+  // Fetch data
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  // Handle delete transaction
+  // Delete transaction
   const handleDelete = async (transactionId) => {
     if (!token || !isAuthenticated) {
       toast({
@@ -314,9 +413,10 @@ const TransactionsPage = () => {
     setStartDateFilter('');
     setEndDateFilter('');
     setSearchTerm('');
+    setDebitCreditFilter('');
   };
 
-  // Render transaction type badge with proper label
+  // Render transaction type badge with proper label and color
   const renderTypeBadge = (type) => {
     const color = TYPE_COLORS[type] || 'gray';
     const label = TYPE_LABELS[type] || type;
@@ -335,6 +435,16 @@ const TransactionsPage = () => {
         <option value="">All Types</option>
         <option value="income">Income</option>
         <option value="expense">Expense</option>
+        <option value="transfer">Transfer</option>
+        <option value="Pendapatan">Pendapatan (Income)</option>
+        <option value="Beban">Beban (Expense)</option>
+        <option value="Pengeluaran">Pengeluaran (Expenditure)</option>
+        <option value="Penerimaan">Penerimaan (Receipt)</option>
+        <option value="Akumulasi Penyusutan">Akumulasi Penyusutan (Accumulated Depreciation)</option>
+        <option value="Kontra Aset">Kontra Aset (Contra Asset)</option>
+        <option value="Aset Tetap">Aset Tetap (Fixed Asset)</option>
+        <option value="Beban Penyusutan">Beban Penyusutan (Depreciation Expense)</option>
+        <option value="Expenditure">Expenditure</option>
       </>
     );
   };
@@ -344,11 +454,12 @@ const TransactionsPage = () => {
     return filteredTransactions.map(transaction => ({
       'Date': transaction.date ? new Date(transaction.date).toLocaleDateString() : 'N/A',
       'Type': TYPE_LABELS[transaction.type] || transaction.type,
+      'DEBIT/CREDIT': transaction.type === 'DEBIT' ? 'DEBIT' : 'CREDIT',
       'Description': transaction.description || '',
       'Account': getAccountName(transaction.accountCode),
       'Project': transaction.projectId ? getProjectName(transaction.projectId) : 'No Project',
       'Amount': transaction.amount,
-      'Amount (Formatted)': formatCurrency(transaction.amount),
+      'Formatted Amount': formatCurrency(transaction.amount),
       'Notes': transaction.notes || ''
     }));
   };
@@ -358,6 +469,75 @@ const TransactionsPage = () => {
     console.log(`Transaction export completed in ${format} format`);
   };
 
+  // Handle select all transactions
+  const handleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedTransactions([]);
+    } else {
+      setSelectedTransactions(filteredTransactions.map(t => t.id));
+    }
+    setIsAllSelected(!isAllSelected);
+  };
+  
+  // Handle select single transaction
+  const handleSelectTransaction = (transactionId) => {
+    if (selectedTransactions.includes(transactionId)) {
+      setSelectedTransactions(selectedTransactions.filter(id => id !== transactionId));
+      setIsAllSelected(false);
+    } else {
+      setSelectedTransactions([...selectedTransactions, transactionId]);
+      if (selectedTransactions.length + 1 === filteredTransactions.length) {
+        setIsAllSelected(true);
+      }
+    }
+  };
+  
+  // Handle batch delete
+  const handleBatchDelete = async () => {
+    if (selectedTransactions.length === 0) return;
+    
+    setBatchActionLoading(true);
+    try {
+      // Create promises for all delete operations
+      const deletePromises = selectedTransactions.map(id => 
+        axios.delete(`${process.env.NEXT_PUBLIC_API_URL}/api/transactions/${id}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+      );
+      
+      // Execute all delete operations
+      await Promise.all(deletePromises);
+      
+      toast({
+        title: 'Success',
+        description: `${selectedTransactions.length} transactions successfully deleted`,
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
+      
+      // Reset selection and refresh data
+      setSelectedTransactions([]);
+      setIsAllSelected(false);
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting transactions:', error);
+      
+      toast({
+        title: 'Error',
+        description: 'Failed to delete some transactions',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setBatchActionLoading(false);
+      onDeleteAlertClose();
+    }
+  };
+
   return (
     <Box p={4}>
       <Flex justify="space-between" align="center" mb={6}>
@@ -365,6 +545,17 @@ const TransactionsPage = () => {
           Financial Transactions
         </Heading>
         <HStack>
+          {selectedTransactions.length > 0 && (
+            <Button 
+              colorScheme="red" 
+              leftIcon={<FiTrash2 />}
+              onClick={onDeleteAlertOpen}
+              isLoading={batchActionLoading}
+              loadingText="Deleting..."
+            >
+              Delete Selected ({selectedTransactions.length})
+            </Button>
+          )}
           <ExportButton 
             data={prepareExportData()}
             filename="financial_transactions"
@@ -389,71 +580,86 @@ const TransactionsPage = () => {
       </Flex>
 
       {/* Filters */}
-      <Box mb={6} p={4} bg="white" borderRadius="md" shadow="sm">
-        <Heading as="h3" size="sm" mb={4}>Filters</Heading>
-        <Stack direction={{ base: 'column', md: 'row' }} spacing={4} mb={4}>
-          <InputGroup maxW={{ md: '300px' }}>
-            <InputLeftElement pointerEvents="none">
-              <FiSearch color="gray.300" />
-            </InputLeftElement>
-            <Input
-              placeholder="Search descriptions or accounts..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </InputGroup>
-
-          <Select
-            placeholder="Filter by type"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            maxW={{ md: '200px' }}
-          >
-            {renderTypeFilterOptions()}
-          </Select>
-
-          <Select
-            placeholder="Filter by account"
-            value={accountFilter}
-            onChange={(e) => setAccountFilter(e.target.value)}
-            maxW={{ md: '200px' }}
-          >
-            <option value="">All accounts</option>
-            {accounts.map((account) => (
-              <option key={account.code} value={account.code}>{account.name}</option>
-            ))}
-          </Select>
-
-          <Select
-            placeholder="Filter by project"
-            value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-            maxW={{ md: '200px' }}
-          >
-            <option value="">All projects</option>
-            <option value="none">No Project</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id.toString()}>{project.name}</option>
-            ))}
-          </Select>
-        </Stack>
-
+      <Box mb={6}>
         <Stack direction={{ base: 'column', md: 'row' }} spacing={4} align="flex-end">
-          <FormControl maxW={{ md: '200px' }}>
-            <FormLabel fontSize="sm">Start Date</FormLabel>
+          <FormControl flex="1">
+            <FormLabel htmlFor="search">Search</FormLabel>
+            <InputGroup>
+              <InputLeftElement pointerEvents="none">
+                <FiSearch color="gray.300" />
+              </InputLeftElement>
+              <Input
+                id="search"
+                placeholder="Search transactions..."
+                value={searchTerm}
+                onChange={handleSearchChange}
+              />
+            </InputGroup>
+          </FormControl>
+
+          <FormControl flex="1">
+            <FormLabel htmlFor="type-filter">Type</FormLabel>
+            <Select 
+              id="type-filter" 
+              value={typeFilter} 
+              onChange={handleFilterChange(setTypeFilter)}
+              placeholder="All Types"
+            >
+              {renderTypeFilterOptions()}
+            </Select>
+          </FormControl>
+
+          <FormControl flex="1">
+            <FormLabel htmlFor="account-filter">Account</FormLabel>
+            <Select 
+              id="account-filter" 
+              value={accountFilter} 
+              onChange={handleFilterChange(setAccountFilter)}
+              placeholder="All Accounts"
+            >
+              <option value="">All Accounts</option>
+              {accounts.map((account) => (
+                <option key={account.code} value={account.code}>
+                  {account.code} - {account.name}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControl flex="1">
+            <FormLabel htmlFor="project-filter">Project</FormLabel>
+            <Select 
+              id="project-filter" 
+              value={projectFilter} 
+              onChange={handleFilterChange(setProjectFilter)}
+              placeholder="All Projects"
+            >
+              <option value="">All Projects</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.projectCode} - {project.name}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControl flex="1">
+            <FormLabel htmlFor="start-date-filter">Start Date</FormLabel>
             <Input
+              id="start-date-filter"
               type="date"
               value={startDateFilter}
-              onChange={(e) => setStartDateFilter(e.target.value)}
+              onChange={handleFilterChange(setStartDateFilter)}
             />
           </FormControl>
 
-          <FormControl maxW={{ md: '200px' }}>
-            <FormLabel fontSize="sm">End Date</FormLabel>
+          <FormControl flex="1">
+            <FormLabel htmlFor="end-date-filter">End Date</FormLabel>
             <Input
+              id="end-date-filter"
               type="date"
               value={endDateFilter}
-              onChange={(e) => setEndDateFilter(e.target.value)}
+              onChange={handleFilterChange(setEndDateFilter)}
             />
           </FormControl>
 
@@ -466,30 +672,6 @@ const TransactionsPage = () => {
           </Button>
         </Stack>
       </Box>
-
-      {/* Summary Cards */}
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Income</StatLabel>
-          <StatNumber color="green.500">{formatCurrency(totalIncome)}</StatNumber>
-        </Stat>
-        
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Total Expense</StatLabel>
-          <StatNumber color="red.500">{formatCurrency(totalExpense)}</StatNumber>
-        </Stat>
-        
-        <Stat bg="white" p={4} borderRadius="md" shadow="sm">
-          <StatLabel>Net Cash Flow</StatLabel>
-          <StatNumber color={netCashFlow >= 0 ? "green.500" : "red.500"}>
-            {formatCurrency(netCashFlow)}
-          </StatNumber>
-          <StatHelpText>
-            <StatArrow type={netCashFlow >= 0 ? "increase" : "decrease"} />
-            {netCashFlow >= 0 ? "Positive" : "Negative"} balance
-          </StatHelpText>
-        </Stat>
-      </SimpleGrid>
 
       {error && <ErrorAlert message={error} />}
 
@@ -505,81 +687,202 @@ const TransactionsPage = () => {
           onAction={!searchTerm && !typeFilter && !accountFilter && !projectFilter && !startDateFilter && !endDateFilter ? () => handleEditTransaction() : null}
         />
       ) : (
-        <Box overflowX="auto">
-          <Table variant="simple" bg="white" shadow="sm">
-            <Thead>
-              <Tr>
-                <Th>Date</Th>
-                <Th>Description</Th>
-                <Th>Account</Th>
-                <Th>Project</Th>
-                <Th>Type</Th>
-                <Th isNumeric>Amount</Th>
-                <Th>Actions</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
+        <>
+          {isMobile ? (
+            // Mobile card view
+            <Box>
               {filteredTransactions.map((transaction) => (
-                <Tr key={transaction.id}>
-                  <Td>{formatDate(transaction.date)}</Td>
-                  <Td maxW="300px" isTruncated>
-                    {transaction.description}
+                <Card key={transaction.id} mb={4} borderLeft="4px solid" 
+                  borderLeftColor={
+                    transaction.type === 'DEBIT' ? 'blue.500' :
+                    transaction.type === 'CREDIT' ? 'orange.500' :
+                    TYPE_COLORS[transaction.type] ? `${TYPE_COLORS[transaction.type]}.500` : 'gray.500'
+                  }>
+                  <CardHeader pb={2}>
+                    <Flex justify="space-between" align="center">
+                      <Flex align="center">
+                        <Checkbox 
+                          mr={2}
+                          isChecked={selectedTransactions.includes(transaction.id)}
+                          onChange={() => handleSelectTransaction(transaction.id)}
+                          colorScheme="teal"
+                        />
+                        <Box>
+                          <Text fontWeight="bold">{formatDate(transaction.date)}</Text>
+                          <Text fontSize="sm" color="gray.600">{getAccountName(transaction.accountCode)}</Text>
+                        </Box>
+                      </Flex>
+                      <Stack>
+                        {renderTypeBadge(transaction.type)}
+                        <Badge 
+                          colorScheme={transaction.type === 'DEBIT' ? 'blue' : 'orange'} 
+                          variant="outline"
+                          fontSize="xs"
+                        >
+                          {transaction.type === 'DEBIT' ? 'DEBIT' : 'CREDIT'}
+                        </Badge>
+                      </Stack>
+                    </Flex>
+                  </CardHeader>
+                  <Divider />
+                  <CardBody py={3}>
+                    <Text fontWeight="medium">{transaction.description}</Text>
                     {transaction.notes && (
                       <Text fontSize="xs" color="gray.500" mt={1}>
                         {transaction.notes}
                       </Text>
                     )}
-                    {transaction.isCounterTransaction && (
-                      <Badge size="sm" colorScheme="purple" ml={2}>
-                        Auto
-                      </Badge>
-                    )}
-                  </Td>
-                  <Td>
-                    {getAccountName(transaction.accountCode)}
-                  </Td>
-                  <Td>{getProjectName(transaction.project || transaction.projectId)}</Td>
-                  <Td>
-                    {renderTypeBadge(transaction.type)}
-                  </Td>
-                  <Td isNumeric fontWeight="medium" color={
-                    transaction.type === 'income' ? 'green.600' : 
-                    transaction.type === 'expense' ? 'red.600' : 'blue.600'
-                  }>
-                    {formatCurrency(transaction.amount)}
-                  </Td>
-                  <Td>
-                    <Menu>
-                      <MenuButton
-                        as={IconButton}
-                        icon={<FiMoreVertical />}
-                        variant="ghost"
+                    <Flex justify="space-between" mt={2} align="center">
+                      <Text fontSize="sm">
+                        {transaction.project ? getProjectName(transaction.project || transaction.projectId) : 'No Project'}
+                      </Text>
+                      <Text fontWeight="bold" fontSize="lg" color={
+                        transaction.type === 'DEBIT' ? 'blue.600' : 
+                        transaction.type === 'CREDIT' ? 'orange.600' :
+                        TYPE_COLORS[transaction.type] ? `${TYPE_COLORS[transaction.type]}.600` : 'gray.600'
+                      }>
+                        {formatCurrency(transaction.amount)}
+                      </Text>
+                    </Flex>
+                  </CardBody>
+                  <Divider />
+                  <CardFooter pt={2} pb={2}>
+                    <ButtonGroup spacing={2} width="100%" justifyContent="flex-end">
+                      <Button
+                        leftIcon={<FiEdit />}
                         size="sm"
-                      />
-                      <MenuList>
-                        <MenuItem 
-                          icon={<FiEdit />} 
-                          onClick={() => handleEditTransaction(transaction)}
-                          isDisabled={transaction.isCounterTransaction}
-                        >
-                          Edit
-                        </MenuItem>
-                        <MenuItem 
-                          icon={<FiTrash2 />} 
-                          color="red.500"
-                          onClick={() => handleDelete(transaction.id)}
-                          isDisabled={transaction.isCounterTransaction}
-                        >
-                          Delete
-                        </MenuItem>
-                      </MenuList>
-                    </Menu>
-                  </Td>
-                </Tr>
+                        variant="ghost"
+                        onClick={() => handleEditTransaction(transaction)}
+                        isDisabled={transaction.isCounterTransaction}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        leftIcon={<FiTrash2 />}
+                        size="sm"
+                        colorScheme="red"
+                        variant="ghost"
+                        onClick={() => handleDelete(transaction.id)}
+                        isDisabled={transaction.isCounterTransaction}
+                      >
+                        Delete
+                      </Button>
+                    </ButtonGroup>
+                  </CardFooter>
+                </Card>
               ))}
-            </Tbody>
-          </Table>
-        </Box>
+            </Box>
+          ) : (
+            // Desktop table view
+            <Box overflowX="auto">
+              <Table variant="simple" bg="white" shadow="sm">
+                <Thead>
+                  <Tr>
+                    <Th width="40px">
+                      <Checkbox 
+                        isChecked={isAllSelected}
+                        onChange={handleSelectAll}
+                        colorScheme="teal"
+                      />
+                    </Th>
+                    <Th>Date</Th>
+                    <Th>Description</Th>
+                    <Th>Account</Th>
+                    <Th>Project</Th>
+                    <Th>Type</Th>
+                    <Th isNumeric>Amount</Th>
+                    <Th>Actions</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {filteredTransactions.map((transaction) => (
+                    <Tr key={transaction.id}>
+                      <Td>
+                        <Checkbox 
+                          isChecked={selectedTransactions.includes(transaction.id)}
+                          onChange={() => handleSelectTransaction(transaction.id)}
+                          colorScheme="teal"
+                        />
+                      </Td>
+                      <Td>{formatDate(transaction.date)}</Td>
+                      <Td maxW="300px" isTruncated>
+                        {transaction.description}
+                        {transaction.notes && (
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            {transaction.notes}
+                          </Text>
+                        )}
+                        {transaction.isCounterTransaction && (
+                          <Badge size="sm" colorScheme="purple" ml={2}>
+                            Auto
+                          </Badge>
+                        )}
+                      </Td>
+                      <Td>
+                        {getAccountName(transaction.accountCode)}
+                      </Td>
+                      <Td>{getProjectName(transaction.project || transaction.projectId)}</Td>
+                      <Td>
+                        {/* Show both transaction type and DEBIT/CREDIT status */}
+                        <Stack>
+                          {renderTypeBadge(transaction.type)}
+                          <Badge 
+                            colorScheme={transaction.type === 'DEBIT' ? 'blue' : 'orange'} 
+                            variant="outline"
+                            fontSize="xs"
+                          >
+                            {transaction.type === 'DEBIT' ? 'DEBIT' : 'CREDIT'}
+                          </Badge>
+                        </Stack>
+                      </Td>
+                      <Td isNumeric fontWeight="medium" color={
+                        transaction.type === 'DEBIT' ? 'blue.600' : 
+                        transaction.type === 'CREDIT' ? 'orange.600' :
+                        TYPE_COLORS[transaction.type] ? `${TYPE_COLORS[transaction.type]}.600` : 'gray.600'
+                      }>
+                        {formatCurrency(transaction.amount)}
+                      </Td>
+                      <Td>
+                        <Menu>
+                          <MenuButton
+                            as={IconButton}
+                            icon={<FiMoreVertical />}
+                            variant="ghost"
+                            size="sm"
+                          />
+                          <MenuList>
+                            <MenuItem 
+                              icon={<FiEdit />} 
+                              onClick={() => handleEditTransaction(transaction)}
+                              isDisabled={transaction.isCounterTransaction}
+                            >
+                              Edit
+                            </MenuItem>
+                            <MenuItem 
+                              icon={<FiTrash2 />} 
+                              color="red.500"
+                              onClick={() => handleDelete(transaction.id)}
+                              isDisabled={transaction.isCounterTransaction}
+                            >
+                              Delete
+                            </MenuItem>
+                          </MenuList>
+                        </Menu>
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+            </Box>
+          )}
+          
+          {/* Pagination Controls */}
+          <Flex justify="center" mt={6} align="center">
+            <Text fontSize="sm" color="gray.600">
+              Showing all {filteredTransactions.length} transactions
+            </Text>
+          </Flex>
+        </>
       )}
 
       {/* Transaction Form Modal */}
@@ -593,6 +896,40 @@ const TransactionsPage = () => {
           projects={projects}
         />
       )}
+      
+      {/* Batch Delete Confirmation Dialog */}
+      <AlertDialog
+        isOpen={isDeleteAlertOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={onDeleteAlertClose}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Delete {selectedTransactions.length} Transactions
+            </AlertDialogHeader>
+
+            <AlertDialogBody>
+              Are you sure you want to delete {selectedTransactions.length} selected transactions? This action cannot be undone.
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={onDeleteAlertClose}>
+                Cancel
+              </Button>
+              <Button 
+                colorScheme="red" 
+                onClick={handleBatchDelete} 
+                ml={3}
+                isLoading={batchActionLoading}
+                loadingText="Deleting..."
+              >
+                Delete
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Box>
   );
 };

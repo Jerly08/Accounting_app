@@ -1,0 +1,45 @@
+Chart of Accounts
+Search accounts...
+
+Filter by Type
+
+Filter by Category
+Code ↑	Name	Type	Category	Subcategory	Actions
+1101	Kas	Aktiva	Asset	Cash	
+1102	Bank BCA	Aktiva	Asset	Bank	
+1103	Bank Mandiri	Aktiva	Asset	Bank	
+1104	Bank BNI	Aktiva	Asset	Bank	
+1105	Bank BRI	Aktiva	Asset	Bank	
+1201	Piutang Usaha	Aktiva	Asset	Receivable	
+1301	Pekerjaan Dalam Proses (WIP)	Aktiva	Asset	Work In Progress	
+1501	Mesin Boring	Aset Tetap	Fixed Asset	Equipment	
+1502	Mesin Sondir	Aset Tetap	Fixed Asset	Equipment	
+1503	Kendaraan Operasional	Aset Tetap	Fixed Asset	Vehicle	
+1504	Peralatan Kantor	Aset Tetap	Fixed Asset	Office Equipment	
+1505	Bangunan Kantor	Aset Tetap	Fixed Asset	Building	
+1601	Akumulasi Penyusutan Mesin Boring	Kontra Aset	Contra Asset	Accumulated Depreciation	
+1602	Akumulasi Penyusutan Mesin Sondir	Kontra Aset	Contra Asset	Accumulated Depreciation	
+1603	Akumulasi Penyusutan Kendaraan	Kontra Aset	Contra Asset	Accumulated Depreciation	
+1604	Akumulasi Penyusutan Peralatan Kantor	Kontra Aset	Contra Asset	Accumulated Depreciation	
+1605	Akumulasi Penyusutan Bangunan	Kontra Aset	Contra Asset	Accumulated Depreciation	
+2101	Hutang Bank Jangka Pendek	Kewajiban	Hutang Lancar	Bank Loan	
+2102	Hutang Usaha	Kewajiban	Hutang Lancar	Trade Payable	
+2103	Hutang Pajak	Kewajiban	Hutang Lancar	Tax Payable	
+2104	Beban Yang Masih Harus Dibayar	Kewajiban	Hutang Lancar	Accrued Expense	
+2201	Hutang Bank Jangka Panjang	Kewajiban	Hutang Jangka Panjang	Bank Loan	
+2202	Hutang Leasing	Kewajiban	Hutang Jangka Panjang	Leasing	
+3101	Modal Saham	Ekuitas	Modal	Share Capital	
+3102	Laba Ditahan	Ekuitas	Modal	Retained Earnings	
+4001	Pendapatan Jasa Boring	Pendapatan	Revenue	Boring Service	
+4002	Pendapatan Jasa Sondir	Pendapatan	Revenue	Sondir Service	
+4003	Pendapatan Jasa Konsultasi	Pendapatan	Revenue	Consultation Service	
+5101	Beban Proyek - Material	Beban	Project Expense	Material	
+5102	Beban Proyek - Tenaga Kerja	Beban	Project Expense	Labor	
+5103	Beban Proyek - Sewa Peralatan	Beban	Project Expense	Equipment Rental	
+5104	Beban Proyek - Transportasi	Beban	Project Expense	Transportation	
+5105	Beban Proyek - Lain-lain	Beban	Project Expense	Other	
+6101	Beban Operasional Kantor	Beban	Operational Expense	Office	
+6102	Beban Gaji & Tunjangan	Beban	Operational Expense	Salary & Benefit	
+6103	Beban Listrik & Air	Beban	Operational Expense	Utility	
+6104	Beban Internet & Telekomunikasi	Beban	Operational Expense	Communication	
+6105	Beban Penyusutan	Beban	Operational Expense	Depreciation

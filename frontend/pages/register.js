@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '../context/AuthContext';
-import { Box, Button, FormControl, FormLabel, FormErrorMessage, Heading, Input, Text, VStack, Link, useToast } from '@chakra-ui/react';
+import { Box, Button, FormControl, FormLabel, FormErrorMessage, Heading, Input, Text, VStack, Link, useToast, Select } from '@chakra-ui/react';
 import NextLink from 'next/link';
 
 const RegisterPage = () => {
@@ -11,6 +11,7 @@ const RegisterPage = () => {
     username: '',
     password: '',
     confirmPassword: '',
+    role: 'user', // Default role
   });
   
   const [errors, setErrors] = useState({});
@@ -58,6 +59,11 @@ const RegisterPage = () => {
       newErrors.confirmPassword = 'Please confirm your password';
     } else if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Passwords do not match';
+    }
+    
+    // Validate role
+    if (!formData.role) {
+      newErrors.role = 'Role is required';
     }
     
     setErrors(newErrors);
@@ -194,6 +200,19 @@ const RegisterPage = () => {
                 placeholder="Confirm your password"
               />
               <FormErrorMessage>{errors.confirmPassword}</FormErrorMessage>
+            </FormControl>
+            
+            <FormControl isInvalid={!!errors.role}>
+              <FormLabel>Role</FormLabel>
+              <Select
+                name="role"
+                value={formData.role}
+                onChange={handleChange}
+              >
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </Select>
+              <FormErrorMessage>{errors.role}</FormErrorMessage>
             </FormControl>
             
             <Button

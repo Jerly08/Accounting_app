@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const logger = require('../utils/logger');
+const doubleEntryService = require('./doubleEntryService');
 
 /**
  * Calculate WIP value for a project using the Earned Value Method
@@ -8,7 +9,7 @@ const logger = require('../utils/logger');
  * @returns {Object} - WIP calculation result
  */
 const calculateWipValue = (project) => {
-  // Calculate total costs
+  // Calculate total costs - include all costs regardless of status (approved, pending, paid, unpaid, rejected)
   const totalCosts = project.projectcost.reduce((sum, cost) => sum + parseFloat(cost.amount || 0), 0);
   
   // Calculate total billed
@@ -17,10 +18,14 @@ const calculateWipValue = (project) => {
   // Calculate project's total value
   const totalValue = parseFloat(project.totalValue || 0);
   
-  // Calculate percentage of completion based on costs vs expected total cost
+  // For completed projects, use actual progress value or 100%
   let completionPercentage = 0;
   
-  if (totalValue > 0) {
+  if (project.status === 'completed') {
+    // For completed projects, set completion to 100%
+    completionPercentage = 100;
+  } else if (totalValue > 0) {
+    // For ongoing projects, estimate completion based on costs
     // Estimate total cost as 70% of project value (standard cost ratio for this industry)
     const estimatedTotalCost = totalValue * 0.7;
     completionPercentage = estimatedTotalCost > 0 ? (totalCosts / estimatedTotalCost) * 100 : 0;
@@ -36,6 +41,18 @@ const calculateWipValue = (project) => {
   // WIP = Earned Value - Amount Billed
   const wipValue = earnedValue - totalBilled;
   
+  // Log for debugging
+  console.log(`WIP calculation for project ${project.id}:`, {
+    status: project.status,
+    totalCosts,
+    totalBilled,
+    totalValue,
+    completionPercentage,
+    earnedValue,
+    wipValue,
+    costCount: project.projectcost.length
+  });
+  
   return {
     totalCosts,
     totalBilled,
@@ -46,28 +63,43 @@ const calculateWipValue = (project) => {
 };
 
 /**
- * Record WIP accounting transaction
+ * Create double-entry accounting transaction for WIP
  * @param {number} projectId - Project ID
  * @param {number} wipValue - WIP value to record
  * @param {string} notes - Transaction notes
- * @returns {Promise<Object>} - Created transaction
+ * @returns {Promise<Object>} - Created transactions
  */
-const recordWipTransaction = async (projectId, wipValue, notes) => {
+const createWipDoubleEntryTransaction = async (projectId, wipValue, notes) => {
   try {
-    // Find WIP account code from chart of accounts
+    // Find WIP account code (Pekerjaan Dalam Proses)
     const wipAccount = await prisma.chartofaccount.findFirst({
       where: {
         OR: [
           { name: { contains: 'Work In Progress' } },
           { name: { contains: 'WIP' } },
-          { code: '1301' },
-          { code: '1302' }
+          { name: { contains: 'Pekerjaan Dalam Proses' } },
+          { code: '1301' }
         ]
       }
     });
     
     if (!wipAccount) {
       throw new Error('WIP account not found in chart of accounts');
+    }
+    
+    // Find Laba Ditahan account code
+    const retainedEarningsAccount = await prisma.chartofaccount.findFirst({
+      where: {
+        OR: [
+          { name: { contains: 'Retained Earnings' } },
+          { name: { contains: 'Laba Ditahan' } },
+          { code: '3102' }
+        ]
+      }
+    });
+    
+    if (!retainedEarningsAccount) {
+      throw new Error('Retained Earnings account not found in chart of accounts');
     }
     
     // Get project details for reference
@@ -79,21 +111,63 @@ const recordWipTransaction = async (projectId, wipValue, notes) => {
       throw new Error('Project not found');
     }
     
-    // Record the WIP transaction
-    const transaction = await prisma.transaction.create({
-      data: {
-        date: new Date(),
-        type: wipValue > 0 ? 'WIP_INCREASE' : 'WIP_DECREASE',
-        accountCode: wipAccount.code,
-        description: `WIP adjustment for project ${project.projectCode || project.name}`,
-        amount: Math.abs(wipValue),
-        projectId: projectId,
-        notes: notes || `WIP value updated. Earned Value Method calculation.`,
-        updatedAt: new Date()
-      }
-    });
+    // Determine transaction type and accounts based on WIP value
+    // If WIP is positive: Debit WIP, Credit Retained Earnings
+    // If WIP is negative (overbilling): Debit Retained Earnings, Credit WIP
+    const isPositiveWip = wipValue >= 0;
+    const absWipValue = Math.abs(wipValue);
     
-    return transaction;
+    // Create primary transaction data
+    const primaryTransaction = {
+      date: new Date(),
+      // If WIP is positive, debit WIP account (income type)
+      // If WIP is negative, debit Retained Earnings (income type)
+      type: 'income',
+      accountCode: isPositiveWip ? wipAccount.code : retainedEarningsAccount.code,
+      description: `WIP adjustment for project ${project.projectCode || project.name}`,
+      amount: absWipValue,
+      projectId: projectId,
+      notes: notes || `WIP value updated. Earned Value Method calculation.`
+    };
+    
+    // Create counter transaction data
+    const counterTransaction = {
+      date: new Date(),
+      // If WIP is positive, credit Retained Earnings (expense type)
+      // If WIP is negative, credit WIP account (expense type)
+      type: 'expense',
+      accountCode: isPositiveWip ? retainedEarningsAccount.code : wipAccount.code,
+      description: `Counter entry for: WIP adjustment for project ${project.projectCode || project.name}`,
+      amount: absWipValue,
+      projectId: projectId,
+      notes: `Counter transaction for WIP adjustment`
+    };
+    
+    // Create double-entry transaction
+    const result = await doubleEntryService.createDoubleEntryTransaction(
+      primaryTransaction,
+      counterTransaction
+    );
+    
+    return result;
+  } catch (error) {
+    logger.error(`Error creating WIP double-entry transaction: ${error.message}`);
+    throw error;
+  }
+};
+
+/**
+ * Record WIP accounting transaction
+ * @param {number} projectId - Project ID
+ * @param {number} wipValue - WIP value to record
+ * @param {string} notes - Transaction notes
+ * @returns {Promise<Object>} - Created transaction
+ */
+const recordWipTransaction = async (projectId, wipValue, notes) => {
+  try {
+    // Use double-entry accounting for WIP transactions
+    const transactions = await createWipDoubleEntryTransaction(projectId, wipValue, notes);
+    return transactions;
   } catch (error) {
     console.error('Error recording WIP transaction:', error);
     throw error;
@@ -444,6 +518,272 @@ const processProjectWip = async (projectId, notes = '') => {
   }
 };
 
+/**
+ * Update WIP automatically when project costs or billings change
+ * @param {number} projectId - Project ID
+ * @param {string} triggerType - What triggered the update (COST or BILLING)
+ * @returns {Promise<Object>} - Updated WIP data
+ */
+const updateWipAutomatically = async (projectId, triggerType = 'COST') => {
+  try {
+    console.log(`Auto-updating WIP for project ${projectId} triggered by ${triggerType}`);
+    
+    // Process WIP for the project
+    return await processProjectWip(projectId);
+  } catch (error) {
+    console.error(`Error updating WIP automatically for project ${projectId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Create a WIP notification
+ * @param {number} projectId - The project ID
+ * @param {object} notificationData - Notification data
+ * @returns {Promise<object>} - The created notification
+ */
+async function createWipNotification(projectId, notificationData) {
+  try {
+    const notification = await prisma.wip_notification.create({
+      data: {
+        projectId,
+        type: notificationData.type,
+        title: notificationData.title,
+        message: notificationData.message,
+        level: notificationData.level || 'info',
+        metadata: notificationData.metadata || {}
+      }
+    });
+    
+    logger.info(`Created WIP notification for project ${projectId}: ${notificationData.title}`);
+    return notification;
+  } catch (error) {
+    logger.error(`Error creating WIP notification: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Check WIP thresholds and create notifications if needed
+ * @param {number} projectId - The project ID
+ * @returns {Promise<object>} - Results of the threshold checks
+ */
+async function checkWipThresholds(projectId) {
+  try {
+    // Get the latest WIP history entry for the project
+    const latestWipEntry = await prisma.wip_history.findFirst({
+      where: { projectId },
+      orderBy: { date: 'desc' },
+      take: 1
+    });
+    
+    if (!latestWipEntry) {
+      return { success: false, message: 'No WIP history found for this project' };
+    }
+    
+    // Get active thresholds
+    const activeThresholds = await prisma.wip_threshold.findMany({
+      where: { isActive: true }
+    });
+    
+    if (!activeThresholds.length) {
+      return { success: true, message: 'No active thresholds found', triggered: 0 };
+    }
+    
+    // Get project details
+    const project = await prisma.project.findUnique({
+      where: { id: projectId }
+    });
+    
+    if (!project) {
+      return { success: false, message: 'Project not found' };
+    }
+    
+    // Check each threshold
+    let triggeredCount = 0;
+    const notifications = [];
+    
+    for (const threshold of activeThresholds) {
+      let isTriggered = false;
+      let comparisonValue;
+      
+      // Get the value to compare based on the metric type
+      switch (threshold.metricType) {
+        case 'VALUE':
+          comparisonValue = Number(latestWipEntry.wipValue);
+          break;
+        case 'PERCENTAGE':
+          comparisonValue = (Number(latestWipEntry.wipValue) / Number(project.totalValue)) * 100;
+          break;
+        case 'AGE':
+          comparisonValue = latestWipEntry.ageInDays;
+          break;
+        case 'RISK_SCORE':
+          comparisonValue = latestWipEntry.riskScore;
+          break;
+        default:
+          comparisonValue = Number(latestWipEntry.wipValue);
+      }
+      
+      // Check if threshold is triggered based on operator
+      const thresholdValue = Number(threshold.thresholdValue);
+      switch (threshold.operator) {
+        case 'GT':
+          isTriggered = comparisonValue > thresholdValue;
+          break;
+        case 'LT':
+          isTriggered = comparisonValue < thresholdValue;
+          break;
+        case 'EQ':
+          isTriggered = comparisonValue === thresholdValue;
+          break;
+        case 'GTE':
+          isTriggered = comparisonValue >= thresholdValue;
+          break;
+        case 'LTE':
+          isTriggered = comparisonValue <= thresholdValue;
+          break;
+        default:
+          isTriggered = false;
+      }
+      
+      // Create notification if threshold is triggered
+      if (isTriggered) {
+        triggeredCount++;
+        
+        try {
+          const notification = await createWipNotification(projectId, {
+            type: 'WIP_THRESHOLD',
+            title: `WIP Threshold Alert: ${threshold.name}`,
+            message: `Project "${project.name}" has triggered the ${threshold.name} threshold. ${threshold.description || ''}`,
+            level: 'warning',
+            metadata: {
+              thresholdId: threshold.id,
+              thresholdName: threshold.name,
+              metricType: threshold.metricType,
+              operator: threshold.operator,
+              thresholdValue,
+              actualValue: comparisonValue
+            }
+          });
+          
+          notifications.push(notification);
+        } catch (error) {
+          logger.error(`Error creating threshold notification: ${error.message}`);
+          // Continue checking other thresholds even if notification fails
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      triggered: triggeredCount,
+      notifications,
+      projectId,
+      projectName: project.name
+    };
+  } catch (error) {
+    logger.error(`Error checking WIP thresholds: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Delete WIP accounting transaction with double-entry principle
+ * @param {number} projectId - Project ID
+ * @returns {Promise<boolean>} - Success status
+ */
+const deleteWipDoubleEntryTransaction = async (projectId) => {
+  try {
+    // Find WIP account code
+    const wipAccount = await prisma.chartofaccount.findFirst({
+      where: {
+        OR: [
+          { name: { contains: 'Work In Progress' } },
+          { name: { contains: 'WIP' } },
+          { name: { contains: 'Pekerjaan Dalam Proses' } },
+          { code: '1301' }
+        ]
+      }
+    });
+    
+    if (!wipAccount) {
+      throw new Error('WIP account not found in chart of accounts');
+    }
+    
+    // Find recent WIP transactions for this project
+    const wipTransactions = await prisma.transaction.findMany({
+      where: {
+        projectId: projectId,
+        accountCode: wipAccount.code,
+        description: {
+          contains: 'WIP adjustment'
+        },
+        createdAt: {
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: 2 // Get the most recent transactions
+    });
+    
+    if (wipTransactions.length === 0) {
+      logger.info(`No recent WIP transactions found for project ${projectId}`);
+      return false;
+    }
+    
+    // For each transaction, find and delete its counter transaction
+    for (const transaction of wipTransactions) {
+      // Find counter transaction
+      const counterTransaction = await doubleEntryService.findCounterTransaction(transaction.id);
+      
+      if (counterTransaction) {
+        // Delete counter transaction
+        await prisma.transaction.delete({
+          where: { id: counterTransaction.id }
+        });
+        
+        // Delete primary transaction
+        await prisma.transaction.delete({
+          where: { id: transaction.id }
+        });
+        
+        logger.info(`Deleted WIP transaction ${transaction.id} and counter transaction ${counterTransaction.id}`);
+      } else {
+        // Delete just the primary transaction if counter not found
+        await prisma.transaction.delete({
+          where: { id: transaction.id }
+        });
+        
+        logger.info(`Deleted WIP transaction ${transaction.id} (counter transaction not found)`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`Error deleting WIP double-entry transaction: ${error.message}`);
+    throw error;
+  }
+};
+
+/**
+ * Delete WIP transaction for a project
+ * @param {number} projectId - Project ID
+ * @returns {Promise<boolean>} - Success status
+ */
+const deleteWipTransaction = async (projectId) => {
+  try {
+    // Use double-entry accounting to delete WIP transactions
+    const result = await deleteWipDoubleEntryTransaction(projectId);
+    return result;
+  } catch (error) {
+    console.error('Error deleting WIP transaction:', error);
+    throw error;
+  }
+};
+
 module.exports = {
   calculateWipValue,
   recordWipTransaction,
@@ -452,5 +792,10 @@ module.exports = {
   recordWipHistory,
   getWipAgingAnalysis,
   getWipHistory,
-  getWipTrendData
+  getWipTrendData,
+  updateWipAutomatically,
+  createWipNotification,
+  checkWipThresholds,
+  deleteWipTransaction,
+  createWipDoubleEntryTransaction
 }; 

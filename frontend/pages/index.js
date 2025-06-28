@@ -45,6 +45,7 @@ import ErrorAlert from '../components/common/ErrorAlert';
 // Status colors for badges
 const STATUS_COLORS = {
   'ongoing': 'green',
+  'planned': 'purple',
   'completed': 'blue',
   'cancelled': 'red',
   'unpaid': 'red',
@@ -59,7 +60,8 @@ const DashboardPage = () => {
   const [dashboardData, setDashboardData] = useState({
     projects: {
       total: 0,
-      active: 0,
+      ongoing: 0,
+      planned: 0,
       completed: 0,
       cancelled: 0,
       recentProjects: []
@@ -68,7 +70,19 @@ const DashboardPage = () => {
       totalIncome: 0,
       totalExpense: 0,
       netIncome: 0,
-      recentTransactions: []
+      recentTransactions: [],
+      cashPosition: 0,
+      accountsReceivable: {
+        total: 0,
+        aging: {
+          current: 0,
+          lessThan30: 0,
+          thirtyToSixty: 0,
+          sixtyToNinety: 0,
+          overNinety: 0
+        }
+      },
+      revenueExpenseTrend: []
     },
     billings: {
       totalBilled: 0,
@@ -84,7 +98,10 @@ const DashboardPage = () => {
     },
     wip: {
       totalWipValue: 0,
-      wipProjects: 0
+      wipProjects: 0,
+      wipTrend: [],
+      projectsWithWip: [],
+      projectedCashflow: []
     },
     clients: {
       totalClients: 0
@@ -148,7 +165,8 @@ const DashboardPage = () => {
       const defaultDashboardData = {
         projects: {
           total: 0,
-          active: 0,
+          ongoing: 0,
+          planned: 0,
           completed: 0,
           cancelled: 0,
           recentProjects: [],
@@ -158,6 +176,18 @@ const DashboardPage = () => {
           totalExpense: 0,
           netIncome: 0,
           recentTransactions: [],
+          cashPosition: 0,
+          accountsReceivable: {
+            total: 0,
+            aging: {
+              current: 0,
+              lessThan30: 0,
+              thirtyToSixty: 0,
+              sixtyToNinety: 0,
+              overNinety: 0
+            }
+          },
+          revenueExpenseTrend: []
         },
         billings: {
           totalBilled: 0,
@@ -174,6 +204,9 @@ const DashboardPage = () => {
         wip: {
           totalWipValue: 0,
           wipProjects: 0,
+          wipTrend: [],
+          projectsWithWip: [],
+          projectedCashflow: []
         },
         clients: {
           totalClients: 0,
@@ -204,6 +237,18 @@ const DashboardPage = () => {
       if (!Array.isArray(mergedData.billings.recentBillings)) {
         mergedData.billings.recentBillings = [];
       }
+      if (!Array.isArray(mergedData.financial.revenueExpenseTrend)) {
+        mergedData.financial.revenueExpenseTrend = [];
+      }
+      if (!Array.isArray(mergedData.wip.wipTrend)) {
+        mergedData.wip.wipTrend = [];
+      }
+      if (!Array.isArray(mergedData.wip.projectsWithWip)) {
+        mergedData.wip.projectsWithWip = [];
+      }
+      if (!Array.isArray(mergedData.wip.projectedCashflow)) {
+        mergedData.wip.projectedCashflow = [];
+      }
       
       setDashboardData(mergedData);
       setError(null);
@@ -214,11 +259,34 @@ const DashboardPage = () => {
       
       // Set default empty dashboard data on error
       setDashboardData({
-        projects: { total: 0, active: 0, completed: 0, cancelled: 0, recentProjects: [] },
-        financial: { totalIncome: 0, totalExpense: 0, netIncome: 0, recentTransactions: [] },
+        projects: { total: 0, ongoing: 0, planned: 0, completed: 0, cancelled: 0, recentProjects: [] },
+        financial: { 
+          totalIncome: 0, 
+          totalExpense: 0, 
+          netIncome: 0, 
+          recentTransactions: [],
+          cashPosition: 0,
+          accountsReceivable: {
+            total: 0,
+            aging: {
+              current: 0,
+              lessThan30: 0,
+              thirtyToSixty: 0,
+              sixtyToNinety: 0,
+              overNinety: 0
+            }
+          },
+          revenueExpenseTrend: []
+        },
         billings: { totalBilled: 0, totalPaid: 0, totalUnpaid: 0, recentBillings: [] },
         assets: { totalAssets: 0, totalValue: 0, totalDepreciation: 0, bookValue: 0 },
-        wip: { totalWipValue: 0, wipProjects: 0 },
+        wip: { 
+          totalWipValue: 0, 
+          wipProjects: 0,
+          wipTrend: [],
+          projectsWithWip: [],
+          projectedCashflow: []
+        },
         clients: { totalClients: 0 },
       });
       
@@ -255,100 +323,156 @@ const DashboardPage = () => {
 
   return (
     <Box p={4}>
-      <Heading as="h1" size="lg" mb={6}>
-        Dashboard
+      <Heading size="lg" mb={6}>
+        Dashboard Overview
       </Heading>
 
-      {/* Summary Stats */}
-      <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4} mb={8}>
-        <Stat
-          p={4}
-          shadow="md"
-          borderRadius="lg"
-          bg={cardBg}
-          borderLeft="4px solid"
-          borderLeftColor="teal.400"
-        >
-          <Flex justify="space-between">
-            <Box>
-              <StatLabel>Active Projects</StatLabel>
-              <StatNumber>{dashboardData.projects.active}</StatNumber>
-              <StatHelpText>
-                {dashboardData.projects.total} total projects
-              </StatHelpText>
+      {/* Original Dashboard Content */}
+      <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={5} mb={6}>
+        <Box p={5} bg={cardBg} borderRadius="lg" boxShadow="sm">
+          <Flex align="center">
+            <Box p={2} bg="blue.50" borderRadius="md" mr={3}>
+              <Icon as={FiFolder} boxSize={6} color="blue.500" />
             </Box>
-            <Box p={2} bg="teal.50" borderRadius="lg" alignSelf="center">
-              <Icon as={FiFolder} boxSize="24px" color="teal.400" />
+            <Box>
+              <Text fontSize="sm" color="gray.500">
+                Total Projects
+              </Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {dashboardData.projects.total}
+              </Text>
             </Box>
           </Flex>
-        </Stat>
+          <Flex mt={4} justify="space-between">
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Planned
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {dashboardData.projects.planned}
+              </Text>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Ongoing
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {dashboardData.projects.ongoing}
+              </Text>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Completed
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {dashboardData.projects.completed}
+              </Text>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Cancelled
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {dashboardData.projects.cancelled}
+              </Text>
+            </Box>
+          </Flex>
+        </Box>
 
-        <Stat
-          p={4}
-          shadow="md"
-          borderRadius="lg"
-          bg={cardBg}
-          borderLeft="4px solid"
-          borderLeftColor="green.400"
-        >
-          <Flex justify="space-between">
-            <Box>
-              <StatLabel>Total Income</StatLabel>
-              <StatNumber>{formatCurrency(dashboardData.financial.totalIncome)}</StatNumber>
-              <StatHelpText>
-                <StatArrow type={dashboardData.financial.netIncome >= 0 ? 'increase' : 'decrease'} />
-                {formatCurrency(Math.abs(dashboardData.financial.netIncome))} {dashboardData.financial.netIncome >= 0 ? 'profit' : 'loss'}
-              </StatHelpText>
+        <Box p={5} bg={cardBg} borderRadius="lg" boxShadow="sm">
+          <Flex align="center">
+            <Box p={2} bg="green.50" borderRadius="md" mr={3}>
+              <Icon as={FiDollarSign} boxSize={6} color="green.500" />
             </Box>
-            <Box p={2} bg="green.50" borderRadius="lg" alignSelf="center">
-              <Icon as={FiDollarSign} boxSize="24px" color="green.400" />
+            <Box>
+              <Text fontSize="sm" color="gray.500">
+                Total Billings
+              </Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {formatCurrency(dashboardData.billings.totalBilled)}
+              </Text>
             </Box>
           </Flex>
-        </Stat>
+          <Flex mt={4} justify="space-between">
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Paid
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {formatCurrency(dashboardData.billings.totalPaid)}
+              </Text>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Unpaid
+              </Text>
+              <Text fontSize="md" fontWeight="medium" color="red.500">
+                {formatCurrency(dashboardData.billings.totalUnpaid)}
+              </Text>
+            </Box>
+          </Flex>
+        </Box>
 
-        <Stat
-          p={4}
-          shadow="md"
-          borderRadius="lg"
-          bg={cardBg}
-          borderLeft="4px solid"
-          borderLeftColor="blue.400"
-        >
-          <Flex justify="space-between">
-            <Box>
-              <StatLabel>Unpaid Billings</StatLabel>
-              <StatNumber>{formatCurrency(dashboardData.billings.totalUnpaid)}</StatNumber>
-              <StatHelpText>
-                {formatCurrency(dashboardData.billings.totalBilled)} total billed
-              </StatHelpText>
+        <Box p={5} bg={cardBg} borderRadius="lg" boxShadow="sm">
+          <Flex align="center">
+            <Box p={2} bg="purple.50" borderRadius="md" mr={3}>
+              <Icon as={FiTruck} boxSize={6} color="purple.500" />
             </Box>
-            <Box p={2} bg="blue.50" borderRadius="lg" alignSelf="center">
-              <Icon as={FiFileText} boxSize="24px" color="blue.400" />
+            <Box>
+              <Text fontSize="sm" color="gray.500">
+                Fixed Assets
+              </Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {dashboardData.assets.totalAssets}
+              </Text>
             </Box>
           </Flex>
-        </Stat>
+          <Flex mt={4} justify="space-between">
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Book Value
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {formatCurrency(dashboardData.assets.bookValue)}
+              </Text>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="gray.500">
+                Depreciation
+              </Text>
+              <Text fontSize="md" fontWeight="medium">
+                {formatCurrency(dashboardData.assets.totalDepreciation)}
+              </Text>
+            </Box>
+          </Flex>
+        </Box>
 
-        <Stat
-          p={4}
-          shadow="md"
-          borderRadius="lg"
-          bg={cardBg}
-          borderLeft="4px solid"
-          borderLeftColor="purple.400"
-        >
-          <Flex justify="space-between">
-            <Box>
-              <StatLabel>WIP Value</StatLabel>
-              <StatNumber>{formatCurrency(dashboardData.wip.totalWipValue)}</StatNumber>
-              <StatHelpText>
-                {dashboardData.wip.wipProjects} ongoing projects
-              </StatHelpText>
+        <Box p={5} bg={cardBg} borderRadius="lg" boxShadow="sm">
+          <Flex align="center">
+            <Box p={2} bg="orange.50" borderRadius="md" mr={3}>
+              <Icon as={FiUsers} boxSize={6} color="orange.500" />
             </Box>
-            <Box p={2} bg="purple.50" borderRadius="lg" alignSelf="center">
-              <Icon as={FiActivity} boxSize="24px" color="purple.400" />
+            <Box>
+              <Text fontSize="sm" color="gray.500">
+                Clients
+              </Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {dashboardData.clients.totalClients}
+              </Text>
             </Box>
           </Flex>
-        </Stat>
+          <Flex mt={4} align="center">
+            <Button
+              size="sm"
+              leftIcon={<FiArrowRight />}
+              colorScheme="orange"
+              variant="outline"
+              onClick={() => navigateTo('/clients')}
+            >
+              View All Clients
+            </Button>
+          </Flex>
+        </Box>
       </SimpleGrid>
 
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={8} mb={8}>

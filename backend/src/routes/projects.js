@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-const { authenticate, authorize } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
+const statusTransitionService = require('../services/statusTransitionService');
+const doubleEntryService = require('../services/doubleEntryService');
+const logger = require('../utils/logger');
 
 const prisma = new PrismaClient();
 
@@ -10,7 +13,7 @@ const prisma = new PrismaClient();
  * @desc    Get all projects with optional filtering
  * @access  Private
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const { search, status, clientId, limit, page } = req.query;
     const pageNumber = parseInt(page) || 1;
@@ -94,7 +97,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get single project by ID
  * @access  Private
  */
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const project = await prisma.project.findUnique({
@@ -166,7 +169,7 @@ router.get('/:id', authenticate, async (req, res) => {
  * @desc    Create new project
  * @access  Private
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
     const { 
       projectCode, 
@@ -260,7 +263,7 @@ router.post('/', authenticate, async (req, res) => {
  * @desc    Update project
  * @access  Private
  */
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Updating project with ID: ${id}`);
@@ -381,22 +384,21 @@ router.put('/:id', authenticate, async (req, res) => {
  * @desc    Delete project
  * @access  Private (Admin only)
  */
-router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Log user info for debugging
+    console.log('Delete project request:', {
+      projectId: id,
+      userId: req.user.id,
+      userRole: req.user.role,
+      username: req.user.username
+    });
+
     // Check if project exists
     const existingProject = await prisma.project.findUnique({
-      where: { id: parseInt(id) },
-      include: {
-        _count: {
-          select: {
-            projectcost: true,
-            billing: true,
-            transaction: true
-          }
-        }
-      }
+      where: { id: parseInt(id) }
     });
 
     if (!existingProject) {
@@ -406,19 +408,7 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
       });
     }
 
-    // Check if project has related data
-    if (
-      existingProject._count.projectcost > 0 ||
-      existingProject._count.billing > 0 ||
-      existingProject._count.transaction > 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: 'Proyek ini memiliki data biaya, penagihan, atau transaksi terkait dan tidak dapat dihapus'
-      });
-    }
-
-    // Delete project
+    // Delete project - related data will be deleted automatically due to cascade delete in schema
     await prisma.project.delete({
       where: { id: parseInt(id) }
     });
@@ -428,6 +418,7 @@ router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
       message: 'Proyek berhasil dihapus'
     });
   } catch (error) {
+    console.error('Error deleting project:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error saat menghapus proyek',
@@ -479,7 +470,7 @@ const upload = multer({
  * @desc    Get project costs
  * @access  Private
  */
-router.get('/:id/costs', authenticate, async (req, res) => {
+router.get('/:id/costs', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { search, category, status, limit, page } = req.query;
@@ -562,85 +553,122 @@ router.get('/:id/costs', authenticate, async (req, res) => {
 
 /**
  * @route   POST /api/projects/:id/costs
- * @desc    Add project cost
+ * @desc    Add new cost to project
  * @access  Private
  */
-router.post('/:id/costs', authenticate, async (req, res) => {
+router.post('/:id/costs', auth, upload.single('receipt'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      category, 
-      description, 
-      amount, 
-      date, 
-      status = 'pending',
-      receipt
-    } = req.body;
-
+    const { category, description, amount, date, status, notes } = req.body;
+    const userId = req.user?.userId || null;
+    
+    // Process file upload if present
+    let receiptFilename = null;
+    if (req.file) {
+      receiptFilename = `/uploads/receipts/${req.file.filename}`;
+    }
+    
+    // Validate inputs
+    if (!category || !description || !amount || !date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Kategori, deskripsi, jumlah, dan tanggal wajib diisi'
+      });
+    }
+    
     // Check if project exists
     const project = await prisma.project.findUnique({
       where: { id: parseInt(id) }
     });
-
+    
     if (!project) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Proyek tidak ditemukan' 
+      return res.status(404).json({
+        success: false,
+        message: 'Project tidak ditemukan'
       });
     }
-
-    // Validate required fields
-    if (!category || !description || !amount || !date) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Kategori, deskripsi, jumlah, dan tanggal wajib diisi' 
-      });
-    }
-
+    
     // Create project cost
-    const projectCost = await prisma.projectcost.create({
+    const newCost = await prisma.projectcost.create({
       data: {
         projectId: parseInt(id),
         category,
         description,
         amount: parseFloat(amount),
         date: new Date(date),
-        status,
-        receipt,
+        status: status || 'pending',
+        receipt: receiptFilename,
+        createJournalEntry: true, // Enable journal entries by default
         updatedAt: new Date()
+      },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            projectCode: true
+          }
+        }
       }
     });
-
+    
+    // Record initial status history
+    await doubleEntryService.recordProjectCostStatusHistory(
+      newCost.id,
+      'pending', // Initial status is always 'pending'
+      newCost.status,
+      userId,
+      notes
+    );
+    
+    // Create journal entries if status is not pending
+    if (newCost.status !== 'pending' && newCost.createJournalEntry) {
+      try {
+        const journalResult = await doubleEntryService.createJournalEntryForProjectCost(newCost);
+        logger.info('Journal entries created for new project cost', { 
+          costId: newCost.id, 
+          status: newCost.status,
+          result: journalResult ? 'success' : 'no entries created'
+        });
+      } catch (journalError) {
+        logger.error('Failed to create journal entries for new project cost', { 
+          costId: newCost.id, 
+          error: journalError.message 
+        });
+      }
+    }
+    
     res.status(201).json({
       success: true,
       message: 'Biaya proyek berhasil ditambahkan',
-      data: projectCost
+      data: newCost
     });
   } catch (error) {
-    console.error('Error adding project cost:', error);
-    res.status(500).json({ 
-      success: false, 
+    logger.error('Error creating project cost', { error: error.message });
+    res.status(500).json({
+      success: false,
       message: 'Error saat menambahkan biaya proyek',
-      error: error.message 
+      error: error.message
     });
   }
 });
 
 /**
  * @route   PUT /api/projects/:id/costs/:costId
- * @desc    Update project cost
+ * @desc    Update project cost details (not status)
  * @access  Private
  */
-router.put('/:id/costs/:costId', authenticate, async (req, res) => {
+router.put('/:id/costs/:costId', auth, upload.single('receipt'), async (req, res) => {
   try {
     const { id, costId } = req.params;
     const { 
+      projectId,
       category, 
       description, 
       amount, 
       date, 
-      status,
-      receipt
+      billingId,
+      createJournalEntry
     } = req.body;
 
     // Check if cost exists and belongs to the project
@@ -658,18 +686,58 @@ router.put('/:id/costs/:costId', authenticate, async (req, res) => {
       });
     }
 
+    // Only allow editing if status is unpaid
+    if (existingCost.status !== 'unpaid') {
+      return res.status(403).json({
+        success: false,
+        message: 'Hanya biaya proyek dengan status "unpaid" yang dapat diubah'
+      });
+    }
+
+    // Get project details
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(id) }
+    });
+
+    if (!project) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Proyek tidak ditemukan' 
+      });
+    }
+
+    // Process receipt file if uploaded
+    let receiptPath = undefined;
+    if (req.file) {
+      receiptPath = `/uploads/receipts/${req.file.filename}`;
+      
+      // Delete old receipt file if it exists
+      if (existingCost.receipt) {
+        const oldFilePath = path.join(__dirname, '../../../', existingCost.receipt);
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      }
+    }
+
+    // Prepare update data
+    let updateData = {
+      updatedAt: new Date()
+    };
+
+    if (category !== undefined) updateData.category = category;
+    if (description !== undefined) updateData.description = description;
+    if (amount !== undefined) updateData.amount = parseFloat(amount);
+    if (date !== undefined) updateData.date = new Date(date);
+    if (receiptPath !== undefined) updateData.receipt = receiptPath;
+    if (createJournalEntry !== undefined) {
+      updateData.createJournalEntry = createJournalEntry === true || createJournalEntry === 'true';
+    }
+
     // Update project cost
     const updatedCost = await prisma.projectcost.update({
       where: { id: parseInt(costId) },
-      data: {
-        category,
-        description,
-        amount: amount ? parseFloat(amount) : undefined,
-        date: date ? new Date(date) : undefined,
-        status,
-        receipt,
-        updatedAt: new Date()
-      }
+      data: updateData
     });
 
     res.json({
@@ -688,14 +756,147 @@ router.put('/:id/costs/:costId', authenticate, async (req, res) => {
 });
 
 /**
+ * @route   PUT /api/projects/:id/costs/:costId/status
+ * @desc    Update project cost status
+ * @access  Private
+ */
+router.put('/:id/costs/:costId/status', auth, async (req, res) => {
+  try {
+    const { id, costId } = req.params;
+    const { status, notes, cashAccount } = req.body;
+    const userId = req.user?.userId || null;
+    
+    // Validate status
+    const validStatuses = ['pending', 'unpaid', 'paid', 'rejected', 'cancelled', 'planned'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Status tidak valid. Status harus salah satu dari: ${validStatuses.join(', ')}`
+      });
+    }
+    
+    // Get current project cost
+    const currentCost = await prisma.projectcost.findUnique({
+      where: { id: parseInt(costId) },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            projectCode: true
+          }
+        }
+      }
+    });
+    
+    if (!currentCost) {
+      return res.status(404).json({ success: false, message: 'Biaya proyek tidak ditemukan' });
+    }
+    
+    // Don't update if status is the same
+    if (currentCost.status === status) {
+      return res.json({
+        success: true,
+        message: 'Status tidak berubah',
+        data: currentCost
+      });
+    }
+    
+    const oldStatus = currentCost.status;
+    
+    // Update cost status
+    const updatedCost = await prisma.projectcost.update({
+      where: { id: parseInt(costId) },
+      data: {
+        status,
+        updatedAt: new Date()
+      },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            projectCode: true
+          }
+        }
+      }
+    });
+    
+    // Record status history
+    await doubleEntryService.recordProjectCostStatusHistory(
+      parseInt(costId),
+      oldStatus,
+      status,
+      userId,
+      notes
+    );
+    
+    // Create journal entries based on the new status
+    if (updatedCost.createJournalEntry) {
+      try {
+        const journalResult = await doubleEntryService.createJournalEntryForProjectCost(updatedCost, oldStatus);
+        logger.info('Journal entries created for project cost', { 
+          costId, 
+          status, 
+          result: journalResult ? 'success' : 'no entries created'
+        });
+      } catch (journalError) {
+        logger.error('Failed to create journal entries', { 
+          costId, 
+          error: journalError.message 
+        });
+        // We continue even if journal entry creation fails
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Status biaya proyek berhasil diubah menjadi ${status}`,
+      data: updatedCost
+    });
+  } catch (error) {
+    logger.error('Error updating project cost status', { error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat update status biaya proyek',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/projects/:id/costs/:costId/history
+ * @desc    Get project cost status history
+ * @access  Private
+ */
+router.get('/:id/costs/:costId/history', auth, async (req, res) => {
+  try {
+    const { costId } = req.params;
+    
+    const history = await statusTransitionService.getProjectCostStatusHistory(costId);
+    
+    res.json({
+      success: true,
+      data: history
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error saat mengambil riwayat status biaya proyek',
+      error: error.message 
+    });
+  }
+});
+
+/**
  * @route   DELETE /api/projects/:id/costs/:costId
  * @desc    Delete project cost
  * @access  Private
  */
-router.delete('/:id/costs/:costId', authenticate, async (req, res) => {
+router.delete('/:id/costs/:costId', auth, async (req, res) => {
   try {
     const { id, costId } = req.params;
-    
+
     // Check if cost exists and belongs to the project
     const existingCost = await prisma.projectcost.findFirst({
       where: { 
@@ -711,9 +912,37 @@ router.delete('/:id/costs/:costId', authenticate, async (req, res) => {
       });
     }
 
-    // Delete project cost
-    await prisma.projectcost.delete({
-      where: { id: parseInt(costId) }
+    // Only allow deletion if status is unpaid
+    if (existingCost.status !== 'unpaid') {
+      return res.status(403).json({
+        success: false,
+        message: 'Hanya biaya proyek dengan status "unpaid" yang dapat dihapus'
+      });
+    }
+
+    // Find existing transactions related to this project cost
+    const existingTransactions = await prisma.transaction.findMany({
+      where: {
+        projectId: parseInt(id),
+        notes: {
+          contains: `Project cost ID: ${costId}`
+        }
+      }
+    });
+
+    // Delete found transactions and project cost in a transaction
+    await prisma.$transaction(async (prisma) => {
+      // Delete transactions
+      for (const transaction of existingTransactions) {
+        await prisma.transaction.delete({
+          where: { id: transaction.id }
+        });
+      }
+
+      // Delete project cost
+      await prisma.projectcost.delete({
+        where: { id: parseInt(costId) }
+      });
     });
 
     res.json({
@@ -731,111 +960,11 @@ router.delete('/:id/costs/:costId', authenticate, async (req, res) => {
 });
 
 /**
- * @route   PUT /api/projects/:id/costs/:costId/approve
- * @desc    Approve project cost
- * @access  Private (Admin only)
- */
-router.put('/:id/costs/:costId/approve', authenticate, authorize(['admin']), async (req, res) => {
-  try {
-    const { id, costId } = req.params;
-    
-    // Check if cost exists and belongs to the project
-    const existingCost = await prisma.projectcost.findFirst({
-      where: { 
-        id: parseInt(costId),
-        projectId: parseInt(id)
-      }
-    });
-
-    if (!existingCost) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Biaya proyek tidak ditemukan' 
-      });
-    }
-
-    // Update cost status to approved
-    const updatedCost = await prisma.projectcost.update({
-      where: { id: parseInt(costId) },
-      data: {
-        status: 'approved',
-        updatedAt: new Date()
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Biaya proyek berhasil disetujui',
-      data: updatedCost
-    });
-  } catch (error) {
-    console.error('Error approving project cost:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saat menyetujui biaya proyek',
-      error: error.message 
-    });
-  }
-});
-
-/**
- * @route   PUT /api/projects/:id/costs/:costId/reject
- * @desc    Reject project cost
- * @access  Private (Admin only)
- */
-router.put('/:id/costs/:costId/reject', authenticate, authorize(['admin']), async (req, res) => {
-  try {
-    const { id, costId } = req.params;
-    const { rejectionReason } = req.body;
-    
-    // Check if cost exists and belongs to the project
-    const existingCost = await prisma.projectcost.findFirst({
-      where: { 
-        id: parseInt(costId),
-        projectId: parseInt(id)
-      }
-    });
-
-    if (!existingCost) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Biaya proyek tidak ditemukan' 
-      });
-    }
-
-    // Update cost status to rejected
-    const updatedCost = await prisma.projectcost.update({
-      where: { id: parseInt(costId) },
-      data: {
-        status: 'rejected',
-        description: rejectionReason ? 
-          `${existingCost.description} [REJECTED: ${rejectionReason}]` : 
-          existingCost.description,
-        updatedAt: new Date()
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Biaya proyek berhasil ditolak',
-      data: updatedCost
-    });
-  } catch (error) {
-    console.error('Error rejecting project cost:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saat menolak biaya proyek',
-      error: error.message 
-    });
-  }
-});
-
-/**
  * @route   GET /api/projects/:id/billings
  * @desc    Get billings for a specific project (compatibility route)
  * @access  Private
  */
-router.get('/:id/billings', authenticate, async (req, res) => {
+router.get('/:id/billings', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.query;
